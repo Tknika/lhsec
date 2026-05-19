@@ -1,0 +1,84 @@
+# ── Sensitive / environment ───────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+secrets/
+
+# ── Scan data & results ───────────────────────────────────────────────────────
+# Nuclei JSON/JSONL output (may contain vulnerability details, IPs, endpoints)
+data/
+backend/data/
+**/nuclei_results/
+*.nuclei.json
+*.nuclei.jsonl
+
+# Nmap output files (contain network topology, open ports, OS fingerprints)
+*.nmap
+*.gnmap
+*.xml.nmap
+
+# Amass output (domain enumeration results)
+amass_output/
+*.amass.txt
+
+# Import files (may contain customer IP ranges, contact data)
+imports/
+*.import.csv
+*.import.json
+
+# ── Database ──────────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+.venv/
+venv/
+env/
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+site-packages/
+pip-wheel-metadata/
+
+# ── Testing & linting ─────────────────────────────────────────────────────────
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# ── Editors & OS ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── uv ───────────────────────────────────────────────────────────────────────
+# uv.lock is intentionally committed for reproducible installs
+# .python-version is intentionally committed

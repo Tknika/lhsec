@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — LHSec{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block header %}Dashboard{% endblock %}
+
+{% block header_actions %}
+<a href="/organizations" class="px-3 py-1.5 text-[12px] bg-brand hover:bg-brand-hover rounded-lg font-medium transition-colors flex items-center gap-1.5">
+  <i data-lucide="plus" class="w-3.5 h-3.5"></i> Add Organization
+</a>
+{% endblock %}
+
+{% block content %}
+{% set sev = severity_counts %}
+
+<!-- Stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  {% macro stat_card(color, icon, label, value) %}
+  <div class="bg-surface border border-surface-border rounded-xl p-4 hover:border-white/10 transition-colors">
+    <div class="flex items-center gap-2 mb-2"><i data-lucide="{{ icon }}" class="w-4 h-4 {{ color }}"></i><span class="text-[11px] text-gray-500 uppercase tracking-wider">{{ label }}</span></div>
+    <span class="text-2xl font-semibold text-gray-100">{{ value }}</span>
+  </div>
+  {% endmacro %}
+
+  {{ stat_card('text-indigo-400', 'building-2', 'Organizations', total_organizations) }}
+  {{ stat_card('text-red-400', 'alert-triangle', 'Critical (open)', sev.get('critical',0)) }}
+  {{ stat_card('text-orange-400', 'alert-circle', 'High (open)', sev.get('high',0)) }}
+  {{ stat_card('text-yellow-400', 'shield-alert', 'Medium (open)', sev.get('medium',0)) }}
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+  <!-- Critical findings -->
+  <div class="bg-surface border border-surface-border rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+      <div class="flex items-center gap-2"><i data-lucide="flame" class="w-4 h-4 text-red-400"></i><h2 class="text-sm font-medium">Open Critical Findings</h2></div>
+      <a href="/findings?severity=critical" class="text-[12px] text-brand hover:underline">View all</a>
+    </div>
+    {% if critical_findings %}
+    <div class="divide-y divide-surface-border">
+      {% for f in critical_findings %}
+      <div class="px-5 py-3 hover:bg-white/[0.02] transition-colors flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-red-300 truncate">{{ f.name }}</p>
+          <p class="text-[12px] text-gray-500 font-mono truncate">{{ f.host }}</p>
+        </div>
+        <span class="text-[11px] text-gray-500 flex-shrink-0 mt-0.5">{{ f.organization.name if f.organization else f.organization_id }}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="px-5 py-10 text-center"><i data-lucide="check-circle-2" class="w-8 h-8 text-emerald-500/80 mx-auto mb-2"></i><p class="text-sm text-gray-500">No open critical findings</p></div>
+    {% endif %}
+  </div>
+
+  <!-- Recent scans -->
+  <div class="bg-surface border border-surface-border rounded-xl overflow-hidden flex flex-col">
+    <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+      <div class="flex items-center gap-2"><i data-lucide="scan-search" class="w-4 h-4 text-blue-400"></i><h2 class="text-sm font-medium">Recent Scan Jobs</h2></div>
+      <a href="/scans" class="text-[12px] text-brand hover:underline">View all</a>
+    </div>
+    {% if recent_jobs %}
+    <div class="divide-y divide-surface-border">
+      {% for job in recent_jobs %}
+      <a href="/scans/{{ job.id }}" class="px-5 py-3 flex items-center justify-between gap-2 hover:bg-white/[0.02] transition-colors">
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-gray-200 truncate">{{ job.scan_type }}</span>
+            <span class="text-[11px] px-1.5 py-0.5 rounded-full font-mono
+              {% if job.status=='done' %}bg-emerald-950/50 text-emerald-300
+              {% elif job.status=='running' %}bg-blue-950/50 text-blue-300
+              {% elif job.status=='failed' %}bg-red-950/50 text-red-300
+              {% else %}bg-gray-800 text-gray-400{% endif %}">{{ job.status }}</span>
+          </div>
+          <p class="text-[12px] text-gray-500 mt-0.5">
+            {% if job.organization %}{{ job.organization.name }} · {% endif %}
+            {{ job.started_at.strftime('%Y-%m-%d %H:%M') if job.started_at else 'queued' }}
+          </p>
+        </div>
+        <i data-lucide="chevron-right" class="w-4 h-4 text-gray-600 flex-shrink-0"></i>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="px-5 py-10 flex-1 flex flex-col items-center justify-center">
+      <i data-lucide="inbox" class="w-8 h-8 text-gray-600 mb-2"></i>
+      <p class="text-sm text-gray-500">No scans run yet</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Organizations table -->
+  <div class="bg-surface border border-surface-border rounded-xl overflow-hidden lg:col-span-2">
+    <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+      <div class="flex items-center gap-2"><i data-lucide="building-2" class="w-4 h-4 text-indigo-400"></i><h2 class="text-sm font-medium">Organizations</h2></div>
+      <a href="/organizations" class="text-[12px] text-brand hover:underline">Manage</a>
+    </div>
+    {% if organizations %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-white/[0.02] text-[11px] text-gray-500 uppercase tracking-wider">
+          <tr>
+            <th class="px-5 py-2.5 text-left font-medium">Name</th>
+            <th class="px-5 py-2.5 text-center font-medium">IPs</th>
+            <th class="px-5 py-2.5 text-center font-medium">Domains</th>
+            <th class="px-5 py-2.5 text-center font-medium">Critical</th>
+            <th class="px-5 py-2.5 text-center font-medium">High</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-surface-border">
+          {% for org in organizations %}
+          <tr class="hover:bg-white/[0.02] transition-colors">
+            <td class="px-5 py-3"><a href="/organizations/{{ org.id }}" class="text-brand hover:underline font-medium">{{ org.name }}</a></td>
+            <td class="px-5 py-3 text-center text-gray-400 text-[12px]">{{ org.ip_ranges|length }}</td>
+            <td class="px-5 py-3 text-center text-gray-400 text-[12px]">{{ org.domains|length }}</td>
+            <td class="px-5 py-3 text-center">{% if org.open_critical>0 %}<span class="text-red-400 font-semibold text-[12px]">{{ org.open_critical }}</span>{% else %}<span class="text-gray-700">—</span>{% endif %}</td>
+            <td class="px-5 py-3 text-center">{% if org.open_high>0 %}<span class="text-orange-400 font-semibold text-[12px]">{{ org.open_high }}</span>{% else %}<span class="text-gray-700">—</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="px-5 py-14 text-center">
+      <i data-lucide="building-2" class="w-10 h-10 text-gray-700 mx-auto mb-3"></i>
+      <p class="text-gray-500 mb-1">No organizations yet</p>
+      <p class="text-[12px] text-gray-600 mb-4">Import a CSV or JSON file to get started</p>
+      <a href="/organizations" class="inline-flex px-4 py-2 bg-brand hover:bg-brand-hover rounded-lg text-sm font-medium transition-colors">Get started</a>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

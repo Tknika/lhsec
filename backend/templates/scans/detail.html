@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% block title %}Scan {{ job.id[:8] }} — LHSec{% endblock %}
+{% block nav_scans %}active{% endblock %}
+{% block header %}Scan: {{ job.scan_type }} · {{ job.id[:8] }}…{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+
+  <!-- Meta -->
+  <div class="lg:col-span-1 space-y-4">
+    <div class="bg-surface border border-surface-border rounded-xl p-4 space-y-3 text-sm">
+      <div>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Type</p>
+        <span class="text-[12px] px-2 py-1 rounded-full font-mono
+          {% if job.scan_type=='nuclei' %}bg-red-950/40 text-red-300
+          {% elif job.scan_type=='ct_discovery' %}bg-blue-950/40 text-blue-300
+          {% else %}bg-white/5 text-gray-300{% endif %}">{{ job.scan_type }}</span>
+        {% if job.scan_type=='nuclei' and job.get_config().get('profile') %}
+        <span class="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-white/5 text-gray-500 font-mono">{{ job.get_config().get('profile') }}</span>
+        {% endif %}
+        {% if job.scan_type=='nuclei' and job.get_config().get('template_set') %}
+        <span class="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-white/5 text-gray-500 font-mono">{{ job.get_config().get('template_set') }}</span>
+        {% endif %}
+      </div>
+      <div>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Status</p>
+        <span id="statusBadge" class="text-[12px] px-2 py-1 rounded-full font-mono
+          {% if job.status=='done' %}bg-emerald-950/50 text-emerald-300
+          {% elif job.status=='running' %}bg-blue-950/50 text-blue-300
+          {% elif job.status=='failed' %}bg-red-950/50 text-red-300
+          {% elif job.status=='blocked' %}bg-orange-950/50 text-orange-300
+          {% else %}bg-gray-800 text-gray-400{% endif %}">{{ job.status }}</span>
+      </div>
+      {% if job.organization %}
+      <div>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Organization</p>
+        <a href="/organizations/{{ job.organization_id }}" class="text-brand hover:underline text-[12px]">{{ job.organization.name }}</a>
+      </div>
+      {% endif %}
+      <div>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Started</p>
+        <p class="text-gray-300 text-[12px] font-mono">{{ job.started_at.strftime('%Y-%m-%d %H:%M:%S') if job.started_at else '—' }}</p>
+      </div>
+      <div>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Finished</p>
+        <p class="text-gray-300 text-[12px] font-mono" id="finishedAt">{{ job.finished_at.strftime('%Y-%m-%d %H:%M:%S') if job.finished_at else '—' }}</p>
+      </div>
+      {% if job.findings_count %}
+      <div>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Findings</p>
+        <span class="text-red-400 font-semibold">{{ job.findings_count }}</span>
+      </div>
+      {% endif %}
+      {% if job.domains_found %}
+      <div>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Domains found</p>
+        <span class="text-blue-400 font-semibold">{{ job.domains_found }}</span>
+      </div>
+      {% endif %}
+      {% if job.error_message %}
+      <div class="border-t border-surface-border pt-3">
+        <p class="text-[10px] text-red-400 uppercase tracking-wider mb-1">Error</p>
+        <p class="text-red-300 text-[12px] leading-relaxed">{{ job.error_message }}</p>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div class="lg:col-span-3">
+    <div class="bg-surface border border-surface-border rounded-xl overflow-hidden flex flex-col">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+        <h2 class="text-sm font-medium flex items-center gap-2">
+          <i data-lucide="terminal" class="w-4 h-4 text-emerald-400"></i> Log Output
+        </h2>
+        <div class="flex items-center gap-3">
+          <div id="liveIndicator" {% if job.status in ['running','pending'] %}class="flex items-center gap-1.5 text-[11px] text-blue-400"{% else %}class="hidden"{% endif %}>
+            <span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span> Live
+          </div>
+          {% if job.status == 'running' %}
+          <button id="stopBtn" onclick="stopJob()"
+            class="flex items-center gap-1 px-2.5 py-1 text-[11px] text-red-400 border border-red-800/40 hover:bg-red-950/30 rounded-md transition-colors font-medium">
+            <i data-lucide="square" class="w-3 h-3"></i> Stop
+          </button>
+          {% endif %}
+          {% if job.status in ['blocked', 'failed', 'stopped'] and job.scan_type == 'nuclei' %}
+          <button id="resumeBtn" onclick="resumeJob()"
+            class="flex items-center gap-1 px-2.5 py-1 text-[11px] text-orange-300 border border-orange-800/40 hover:bg-orange-950/30 rounded-md transition-colors font-medium">
+            <i data-lucide="play" class="w-3 h-3"></i> Resume
+          </button>
+          {% endif %}
+        </div>
+      </div>
+      <pre id="logPre" class="font-mono text-[12px] leading-relaxed text-emerald-400/80 bg-black/40 p-5 overflow-y-auto flex-1 whitespace-pre-wrap min-h-[400px] max-h-[65vh] scrollbar-thin">{{ job.log_output or '(no output yet)' }}</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const jobId="{{ job.id }}",status="{{ job.status }}";
+  const logEl=document.getElementById('logPre'),badge=document.getElementById('statusBadge'),ind=document.getElementById('liveIndicator');
+
+  function onFinished(s){
+    badge.textContent=s;
+    // Update badge colour dynamically
+    badge.className = badge.className.replace(/bg-\S+ text-\S+/g,'').trim();
+    const colours = {done:'bg-emerald-950/50 text-emerald-300',failed:'bg-red-950/50 text-red-300',blocked:'bg-orange-950/50 text-orange-300',stopped:'bg-gray-800 text-gray-400'};
+    badge.classList.add(...(colours[s]||'bg-gray-800 text-gray-400').split(' '));
+    ind.classList.add('hidden');
+    const stopBtn=document.getElementById('stopBtn');
+    if(stopBtn)stopBtn.remove();
+    // Show resume button for blocked/failed/stopped nuclei scans
+    if((s==='blocked'||s==='failed'||s==='stopped') && '{{ job.scan_type }}'==='nuclei'){
+      let btn=document.getElementById('resumeBtn');
+      if(!btn){
+        btn=document.createElement('button');
+        btn.id='resumeBtn';
+        btn.innerHTML='<i data-lucide="play" class="w-3 h-3"></i> Resume';
+        btn.className='flex items-center gap-1 px-2.5 py-1 text-[11px] text-orange-300 border border-orange-800/40 hover:bg-orange-950/30 rounded-md transition-colors font-medium';
+        btn.onclick=resumeJob;
+        document.querySelector('.flex.items-center.gap-3').appendChild(btn);
+        lucide.createIcons();
+      }
+    }
+  }
+
+  if(status==='running'||status==='pending'){
+    const proto=location.protocol==='https:'?'wss':'ws';
+    const ws=new WebSocket(`${proto}://${location.host}/api/v1/scans/${jobId}/ws`);
+    ws.onmessage=(evt)=>{
+      const msg=JSON.parse(evt.data);
+      if(msg.type==='history'){logEl.textContent=msg.lines||'';}
+      else if(msg.type==='log'){if(logEl.textContent==='(no output yet)')logEl.textContent='';logEl.textContent+=msg.line+'\n';}
+      else if(msg.type==='status'){onFinished(msg.status);ws.close();}
+      logEl.scrollTop=logEl.scrollHeight;
+    };
+    ws.onerror=()=>{
+      ind.innerHTML='<span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span> Polling';
+      pollFallback();
+    };
+    async function pollFallback(){
+      while(true){
+        await new Promise(r=>setTimeout(r,2000));
+        try{
+          const r=await fetch(`/api/v1/scans/${jobId}/status`);
+          const d=await r.json();
+          logEl.textContent=d.log_output||'';
+          badge.textContent=d.status;
+          logEl.scrollTop=logEl.scrollHeight;
+          if(d.status==='done'||d.status==='failed'||d.status==='blocked'||d.status==='stopped'){onFinished(d.status);break;}
+        }catch(e){}
+      }
+    }
+  }
+
+  window.resumeJob = async function(){
+    const ok = await confirmModal.show(
+      'Resume Scan',
+      'This will launch a new scan using the same settings but with the <strong>Stealth</strong> profile to avoid WAF blocks. Continue?',
+      'Resume'
+    );
+    if (!ok) return;
+    const btn = document.getElementById('resumeBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Resuming…'; }
+    try {
+      const r = await fetch('/api/v1/scans/' + jobId + '/resume', { method: 'POST' });
+      if (r.ok) {
+        const data = await r.json();
+        showToast('New scan launched — redirecting…', 3000);
+        setTimeout(() => { window.location.href = '/scans/' + data.id; }, 1500);
+      } else {
+        const err = await r.json();
+        showToast('Error: ' + (err.detail || r.status), 5000);
+        if (btn) { btn.disabled = false; btn.textContent = 'Resume'; }
+      }
+    } catch (e) {
+      showToast('Network error: ' + e.message, 5000);
+      if (btn) { btn.disabled = false; btn.textContent = 'Resume'; }
+    }
+  };
+
+  window.stopJob = async function(){
+    const ok = await confirmModal.show(
+      'Stop Scan',
+      'This will terminate the running scan. Any matched findings so far will be saved.',
+      'Stop'
+    );
+    if (!ok) return;
+    const btn = document.getElementById('stopBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Stopping…'; }
+    try {
+      const r = await fetch('/api/v1/scans/' + jobId + '/stop', { method: 'POST' });
+      if (r.ok) {
+        logEl.textContent += '[lhs] Stopped by user.\n';
+        logEl.scrollTop = logEl.scrollHeight;
+        onFinished('stopped');
+      } else {
+        const err = await r.json();
+        showToast('Error: ' + (err.detail || r.status), 5000);
+        if (btn) { btn.disabled = false; btn.textContent = 'Stop'; }
+      }
+    } catch (e) {
+      showToast('Network error: ' + e.message, 5000);
+      if (btn) { btn.disabled = false; btn.textContent = 'Stop'; }
+    }
+  };
+})();
+</script>
+{% endblock %}

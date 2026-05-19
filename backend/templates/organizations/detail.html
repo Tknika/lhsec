@@ -1,0 +1,467 @@
+{% extends "base.html" %}
+{% block title %}{{ org.name }} — LHSec{% endblock %}
+{% block header %}{{ org.name }}{% endblock %}
+
+{% block header_actions %}
+<button onclick="launchScan('port-scan',{{ org.id }},'Port Scan — {{ org.name }}')"
+  class="px-3 py-1.5 text-[12px] border border-emerald-700/40 text-emerald-300 hover:bg-emerald-950/30 rounded-lg transition-colors flex items-center gap-1.5">
+  <i data-lucide="radar" class="w-3.5 h-3.5"></i> Port Scan
+</button>
+<button onclick="launchScan('ct-discovery',{{ org.id }},'IP Discovery — {{ org.name }}')"
+  class="px-3 py-1.5 text-[12px] border border-blue-700/40 text-blue-300 hover:bg-blue-950/30 rounded-lg transition-colors flex items-center gap-1.5">
+  <i data-lucide="search" class="w-3.5 h-3.5"></i> IP Discovery
+</button>
+<button onclick="launchScan('nuclei',{{ org.id }},'Nuclei — {{ org.name }}')"
+  class="px-3 py-1.5 text-[12px] border border-red-700/40 text-red-300 hover:bg-red-950/30 rounded-lg transition-colors flex items-center gap-1.5">
+  <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i> Nuclei Scan
+</button>
+<div class="relative" x-data="{open:false}">
+  <button @click="open=!open" class="px-2 py-1.5 text-[12px] border border-surface-border text-gray-400 hover:bg-white/5 rounded-lg transition-colors">
+    <i data-lucide="more-horizontal" class="w-4 h-4"></i>
+  </button>
+  <div x-show="open" @click.outside="open=false" x-cloak
+    class="absolute right-0 top-8 z-20 bg-[#0d1117] border border-surface-border rounded-xl shadow-2xl py-1 min-w-[190px] text-[13px]">
+    <button onclick="clearServices()" class="w-full text-left px-4 py-2 text-gray-400 hover:bg-white/5 flex items-center gap-2">
+      <i data-lucide="radar" class="w-3.5 h-3.5"></i> Clear services
+    </button>
+    <div class="border-t border-surface-border my-1"></div>
+    <button onclick="clearDomains('all')" class="w-full text-left px-4 py-2 text-gray-400 hover:bg-white/5 flex items-center gap-2">
+      <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Clear all domains
+    </button>
+    <button onclick="clearDomains('ip')" class="w-full text-left px-4 py-2 text-gray-400 hover:bg-white/5 flex items-center gap-2">
+      <i data-lucide="server" class="w-3.5 h-3.5"></i> Clear IP-detected only
+    </button>
+    <button onclick="clearDomains('ct')" class="w-full text-left px-4 py-2 text-gray-400 hover:bg-white/5 flex items-center gap-2">
+      <i data-lucide="git-branch" class="w-3.5 h-3.5"></i> Clear CT-discovered only
+    </button>
+    <div class="border-t border-surface-border my-1"></div>
+    <button onclick="deleteOrganization()" class="w-full text-left px-4 py-2 text-red-400 hover:bg-red-950/30 flex items-center gap-2">
+      <i data-lucide="building-2" class="w-3.5 h-3.5"></i> Delete organization
+    </button>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+{% set ip_domains = org.domains | selectattr('source', 'in', ['amass','reverse_dns','http_redirect','tls_cert','manual']) | list %}
+{% set ct_domains = org.domains | selectattr('source', 'in', ['crt_sh','certspotter']) | list %}
+
+{# Group services by IP for display #}
+{% set services_by_ip = {} %}
+{% for svc in services %}
+  {% if svc.ip not in services_by_ip %}{% set _ = services_by_ip.update({svc.ip: []}) %}{% endif %}
+  {% set _ = services_by_ip[svc.ip].append(svc) %}
+{% endfor %}
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  <!-- ── Left sidebar ──────────────────────────────────────────────────── -->
+  <div class="lg:col-span-1 space-y-4">
+
+    <!-- Details -->
+    <div class="bg-surface border border-surface-border rounded-xl p-5 space-y-3">
+      <h2 class="text-[11px] text-gray-500 uppercase tracking-wider font-medium">Details</h2>
+      <div class="space-y-2 text-sm">
+        <div class="flex justify-between"><span class="text-gray-500">Slug</span><code class="text-brand text-[12px]">{{ org.slug }}</code></div>
+        {% if org.contact_email %}
+        <div class="flex justify-between"><span class="text-gray-500">Contact</span><a href="mailto:{{ org.contact_email }}" class="text-blue-400 hover:underline text-[12px]">{{ org.contact_email }}</a></div>
+        {% endif %}
+        <div class="flex justify-between"><span class="text-gray-500">IP Ranges</span><span class="text-gray-300 text-[12px]">{{ org.ip_ranges|length }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">Services</span><span class="text-emerald-400 text-[12px]">{{ services|length }}</span></div>
+        <div class="flex justify-between"><span class="text-gray-500">Domains</span><span class="text-gray-300 text-[12px]">{{ org.domains|length }}</span></div>
+      </div>
+      {% if org.notes %}<p class="text-[12px] text-gray-500 leading-relaxed border-t border-surface-border pt-3 mt-3">{{ org.notes }}</p>{% endif %}
+    </div>
+
+    <!-- IP Ranges -->
+    <div class="bg-surface border border-surface-border rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-surface-border">
+        <h2 class="text-sm font-medium flex items-center gap-2"><i data-lucide="globe" class="w-4 h-4 text-emerald-400"></i> IP Ranges</h2>
+        <span class="text-[11px] text-gray-500">{{ org.ip_ranges|length }}</span>
+      </div>
+      {% if org.ip_ranges %}
+      <div class="divide-y divide-surface-border max-h-48 overflow-y-auto scrollbar-thin">
+        {% for r in org.ip_ranges | sort(attribute='cidr') %}
+        {% set ip_list = expand_cidr(r.cidr) %}
+        {% if ip_list | length == 1 %}
+        {# Single IP — flat row with hover scan icon, same as other panels #}
+        <div class="px-4 py-2.5 group flex items-center justify-between">
+          <div class="flex items-center gap-2 min-w-0">
+            <code class="text-[12px] text-emerald-400/80 font-mono">{{ ip_list[0] }}</code>
+            {% if r.label %}<span class="text-[11px] text-gray-500">{{ r.label }}</span>{% endif %}
+          </div>
+          <button onclick="scanSingleTarget('{{ ip_list[0] }}')" title="Nuclei scan {{ ip_list[0] }}"
+            class="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-1 text-[11px] text-red-300 border border-red-800/40 hover:bg-red-950/30 rounded-md transition-all flex-shrink-0">
+            <i data-lucide="shield-alert" class="w-3 h-3"></i>
+          </button>
+        </div>
+        {% else %}
+        {# CIDR range — show header + expandable IP pills #}
+        <div class="px-4 py-2.5">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <code class="text-[12px] text-emerald-400/80 font-mono">{{ r.cidr }}</code>
+              {% if r.label %}<span class="text-[11px] text-gray-500">{{ r.label }}</span>{% endif %}
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-1 mt-1.5">
+            {% for ip in ip_list %}
+            <span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-gray-400 font-mono group/ip hover:bg-white/10 transition-colors">
+              {{ ip }}
+              <button onclick="scanSingleTarget('{{ ip }}')" title="Nuclei scan {{ ip }}"
+                class="opacity-0 group-hover/ip:opacity-100 text-red-300 hover:text-red-200 transition-opacity">
+                <i data-lucide="shield-alert" class="w-2.5 h-2.5"></i>
+              </button>
+            </span>
+            {% endfor %}
+            {% if r.cidr | expand_cidr | length > ip_list | length %}
+            <span class="text-[10px] text-gray-600 px-1.5 py-0.5">… and more</span>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% else %}<p class="px-4 py-4 text-sm text-gray-600 text-center">None defined</p>{% endif %}
+    </div>
+
+    <!-- Discovered Services -->
+    <div class="bg-surface border border-surface-border rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-surface-border">
+        <h2 class="text-sm font-medium flex items-center gap-2">
+          <i data-lucide="radar" class="w-4 h-4 text-emerald-400"></i>
+          Services
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950/60 text-emerald-400 font-mono">nmap</span>
+        </h2>
+        <span class="text-[11px] text-gray-500">{{ services|length }}</span>
+      </div>
+      {% if services %}
+      <div class="max-h-96 overflow-y-auto scrollbar-thin divide-y divide-surface-border">
+        {% for ip, ip_svcs in services_by_ip.items() | sort %}
+        <div class="px-4 py-2.5">
+          <p class="text-[11px] text-gray-500 font-mono mb-1.5">{{ ip }}</p>
+          <div class="flex flex-wrap gap-1.5">
+            {% for svc in ip_svcs | sort(attribute='port') %}
+            {% set badge_color = 'bg-emerald-950/40 text-emerald-300' if svc.is_http else 'bg-white/5 text-gray-400' %}
+            <span class="text-[11px] px-2 py-0.5 rounded-full font-mono {{ badge_color }} border border-white/5" title="{{ svc.product or '' }} {{ svc.version or '' }}">
+              {{ svc.port }}/{{ svc.service_name or svc.protocol }}{% if svc.tunnel %}/{{ svc.tunnel }}{% endif %}
+            </span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="px-4 py-6 text-center">
+        <i data-lucide="radar" class="w-6 h-6 text-gray-600 mx-auto mb-2"></i>
+        <p class="text-sm text-gray-500 mb-3">No services discovered yet</p>
+        <button onclick="launchScan('port-scan',{{ org.id }},'Port Scan')" class="text-[12px] text-emerald-400 hover:underline">Run Port Scan →</button>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- IP-detected root domains -->
+    <div class="bg-surface border border-surface-border rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-surface-border">
+        <h2 class="text-sm font-medium flex items-center gap-2">
+          <i data-lucide="server" class="w-4 h-4 text-indigo-400"></i>
+          Root Domains
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-950/60 text-indigo-400 font-mono">from IP</span>
+        </h2>
+        <span class="text-[11px] text-gray-500">{{ ip_domains|length }}</span>
+      </div>
+      {% if ip_domains %}
+      <div class="max-h-80 overflow-y-auto divide-y divide-surface-border scrollbar-thin">
+        {% for d in ip_domains | sort(attribute='fqdn') %}
+        <div class="px-4 py-2.5 group flex items-center gap-2">
+          <div class="flex-1 min-w-0">
+            <code class="text-[12px] text-indigo-300/80 font-mono">{{ d.fqdn }}</code>
+            <span class="ml-2 text-[10px] text-gray-600">{{ d.source }}</span>
+            {% if d.resolved_ip %}<p class="text-[11px] text-gray-600 font-mono mt-0.5">{{ d.resolved_ip }}</p>{% endif %}
+          </div>
+          <button onclick="scanSingleTarget('{{ d.fqdn }}')" title="Nuclei scan {{ d.fqdn }}"
+            class="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-1 text-[11px] text-red-300 border border-red-800/40 hover:bg-red-950/30 rounded-md transition-all">
+            <i data-lucide="shield-alert" class="w-3 h-3"></i>
+          </button>
+          <button onclick="runCTForDomain('{{ d.fqdn }}')" title="Run CT discovery for {{ d.fqdn }}"
+            class="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-1 text-[11px] text-purple-300 border border-purple-800/40 hover:bg-purple-950/30 rounded-md transition-all">
+            <i data-lucide="git-branch" class="w-3 h-3"></i> CT
+          </button>
+          <button onclick="deleteDomain({{ org.id }}, {{ d.id }}, '{{ d.fqdn }}')" title="Delete"
+            class="opacity-0 group-hover:opacity-100 p-1 text-[11px] text-red-400 hover:text-red-300 transition-all">
+            <i data-lucide="x" class="w-3 h-3"></i>
+          </button>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="px-4 py-6 text-center">
+        <i data-lucide="server" class="w-6 h-6 text-gray-600 mx-auto mb-2"></i>
+        <p class="text-sm text-gray-500 mb-3">No root domains yet</p>
+        <button onclick="launchScan('ct-discovery',{{ org.id }},'IP Discovery')" class="text-[12px] text-brand hover:underline">Run IP Discovery →</button>
+      </div>
+      {% endif %}
+      <!-- Manual add domain form -->
+      <div class="px-4 py-3 border-t border-surface-border bg-surface-elevated/30">
+        <form onsubmit="addDomain(event, {{ org.id }})" class="flex gap-2">
+          <input type="text" name="fqdn" placeholder="Add domain manually…" autocomplete="off"
+            class="flex-1 bg-black/30 border border-surface-border rounded-md px-2.5 py-1.5 text-[12px] text-gray-200 placeholder-gray-600 focus:outline-none focus:border-indigo-700 font-mono">
+          <button type="submit" class="flex items-center gap-1 px-3 py-1.5 text-[11px] bg-indigo-900/30 border border-indigo-800/40 text-indigo-300 hover:bg-indigo-900/50 rounded-md transition-colors flex-shrink-0">
+            <i data-lucide="plus" class="w-3 h-3"></i> Add
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- CT-discovered subdomains -->
+    <div class="bg-surface border border-surface-border rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-surface-border">
+        <h2 class="text-sm font-medium flex items-center gap-2">
+          <i data-lucide="git-branch" class="w-4 h-4 text-purple-400"></i>
+          Subdomains
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-950/60 text-purple-400 font-mono">via CT</span>
+        </h2>
+        <span class="text-[11px] text-gray-500">{{ resolved_domains|length }}{% if hidden_count %} / {{ ct_domains|length }}{% endif %}</span>
+        {% if hidden_count %}
+        <button onclick="resolveSubdomainIps()" title="Resolve IP addresses for {{ hidden_count }} unresolved subdomain(s)"
+          class="flex items-center gap-1 px-2 py-0.5 text-[10px] text-orange-300 border border-orange-800/40 hover:bg-orange-950/30 rounded-md transition-colors">
+          <i data-lucide="scan-search" class="w-3 h-3"></i> Resolve {{ hidden_count }} IPs
+        </button>
+        {% endif %}
+      </div>
+      {% if ct_domains %}
+      {% set resolved_domains = ct_domains | selectattr('resolved_ip') | list %}
+      {% set hidden_count = ct_domains | length - resolved_domains | length %}
+      <div class="max-h-80 overflow-y-auto divide-y divide-surface-border scrollbar-thin">
+        {% for d in resolved_domains | sort(attribute='fqdn') %}
+        <div class="px-4 py-2.5 group flex items-center gap-2">
+          <div class="flex-1 min-w-0">
+            <code class="text-[12px] text-purple-300/70 font-mono">{{ d.fqdn }}</code>
+            <span class="text-[10px] px-1 py-0.5 rounded bg-white/5 text-gray-600">{{ d.source }}</span>
+            {% if d.resolved_ip and not ip_in_cidrs(d.resolved_ip, org.ip_ranges | map(attribute='cidr') | list) %}
+            <i data-lucide="cloud" class="w-3 h-3 text-blue-400 ml-1 inline" title="Resolves to external IP: {{ d.resolved_ip }}"></i>
+            {% endif %}
+          </div>
+          <button onclick="scanSingleTarget('{{ d.fqdn }}')" title="Nuclei scan {{ d.fqdn }}"
+            class="opacity-0 group-hover:opacity-100 flex items-center gap-1 px-2 py-1 text-[11px] text-red-300 border border-red-800/40 hover:bg-red-950/30 rounded-md transition-all">
+            <i data-lucide="shield-alert" class="w-3 h-3"></i>
+          </button>
+          <button onclick="deleteDomain({{ org.id }}, {{ d.id }}, '{{ d.fqdn }}')" title="Delete"
+            class="opacity-0 group-hover:opacity-100 p-1 text-[11px] text-red-400 hover:text-red-300 transition-all">
+            <i data-lucide="x" class="w-3 h-3"></i>
+          </button>
+        </div>
+        {% endfor %}
+      </div>
+      {% if hidden_count %}
+      <div class="px-4 py-1.5 text-[11px] text-gray-500 border-t border-surface-border">
+        {{ hidden_count }} unresolved subdomain(s) hidden (may be deprecated)
+      </div>
+      {% endif %}
+      {% else %}
+      <div class="px-4 py-6 text-center">
+        <i data-lucide="git-branch" class="w-6 h-6 text-gray-600 mx-auto mb-2"></i>
+        <p class="text-sm text-gray-500">No CT subdomains yet</p>
+        <p class="text-[12px] text-gray-600 mt-1">Hover a root domain and click CT to discover</p>
+      </div>
+      {% endif %}
+    </div>
+
+  </div><!-- /left -->
+
+  <!-- ── Right: findings + scans ──────────────────────────────────────── -->
+  <div class="lg:col-span-2 space-y-5">
+
+    <!-- Severity counters -->
+    <div class="grid grid-cols-4 gap-3">
+      {% macro sev_badge(color, icon, sev) %}
+      {% set count_val = findings|selectattr('severity','equalto',sev)|list|length %}
+      <div class="bg-surface border border-surface-border rounded-xl p-3 text-center hover:border-white/10 transition-colors">
+        <i data-lucide="{{ icon }}" class="w-4 h-4 {{ color }} mx-auto mb-1.5"></i>
+        <p class="text-[10px] text-gray-500 uppercase tracking-wider">{{ sev }}</p>
+        <p class="text-lg font-semibold {{ color }}">{{ count_val }}</p>
+      </div>
+      {% endmacro %}
+      {{ sev_badge('text-red-400',    'flame',         'critical') }}
+      {{ sev_badge('text-orange-400', 'alert-triangle','high') }}
+      {{ sev_badge('text-yellow-400', 'alert-circle',  'medium') }}
+      {{ sev_badge('text-blue-400',   'info',          'low') }}
+    </div>
+
+    <!-- Open Findings -->
+    <div class="bg-surface border border-surface-border rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+        <h2 class="text-sm font-medium flex items-center gap-2"><i data-lucide="bug" class="w-4 h-4 text-red-400"></i> Open Findings</h2>
+        <a href="/findings?organization_id={{ org.id }}" class="text-[12px] text-brand hover:underline">All →</a>
+      </div>
+      {% if findings %}
+      <div class="overflow-x-auto max-h-80 overflow-y-auto scrollbar-thin">
+        <table class="w-full text-sm">
+          <thead class="bg-white/[0.02] text-[11px] text-gray-500 uppercase tracking-wider sticky top-0">
+            <tr>
+              <th class="px-4 py-2.5 text-left font-medium">Sev</th>
+              <th class="px-4 py-2.5 text-left font-medium">Name</th>
+              <th class="px-4 py-2.5 text-left font-medium">Host</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-surface-border">
+            {% for f in findings %}
+            <tr class="hover:bg-white/[0.02]">
+              <td class="px-4 py-2.5"><span class="text-[11px] px-2 py-0.5 rounded-full font-semibold badge-{{ f.severity }}">{{ f.severity|upper }}</span></td>
+              <td class="px-4 py-2.5 text-gray-200 text-[12px] max-w-[200px] truncate">{{ f.name }}</td>
+              <td class="px-4 py-2.5 font-mono text-[11px] text-gray-400 max-w-[200px] truncate">{{ f.host }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="px-5 py-10 text-center">
+        <i data-lucide="shield-check" class="w-8 h-8 text-emerald-500/60 mx-auto mb-2"></i>
+        <p class="text-sm text-gray-500">No open findings</p>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Recent Scan Jobs -->
+    <div class="bg-surface border border-surface-border rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+        <h2 class="text-sm font-medium flex items-center gap-2"><i data-lucide="scan-search" class="w-4 h-4 text-blue-400"></i> Recent Scan Jobs</h2>
+      </div>
+      {% if recent_jobs %}
+      <div class="divide-y divide-surface-border">
+        {% for job in recent_jobs %}
+        <a href="/scans/{{ job.id }}" class="px-5 py-3.5 flex items-center justify-between gap-2 hover:bg-white/[0.02] transition-colors">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <span class="text-[12px] px-2 py-0.5 rounded-full font-mono
+                {% if job.scan_type=='nuclei' %}bg-red-950/40 text-red-300
+                {% elif job.scan_type=='port_scan' %}bg-emerald-950/40 text-emerald-300
+                {% elif job.scan_type=='ct_discovery' %}bg-blue-950/40 text-blue-300
+                {% elif job.scan_type=='ct_subdomain' %}bg-purple-950/40 text-purple-300
+                {% else %}bg-white/5 text-gray-400{% endif %}">{{ job.scan_type }}</span>
+              {% if job.get_config().get('domain') %}<code class="text-[11px] text-purple-300/70">{{ job.get_config().get('domain') }}</code>{% endif %}
+              <span class="text-[11px] px-1.5 py-0.5 rounded-full font-mono
+                {% if job.status=='done' %}bg-emerald-950/50 text-emerald-300
+                {% elif job.status=='running' %}bg-blue-950/50 text-blue-300
+                {% elif job.status=='failed' %}bg-red-950/50 text-red-300
+                {% else %}bg-gray-800 text-gray-400{% endif %}">{{ job.status }}</span>
+            </div>
+            <p class="text-[12px] text-gray-500 mt-0.5">
+              {{ job.started_at.strftime('%Y-%m-%d %H:%M') if job.started_at else 'queued' }}
+              {% if job.findings_count %} · <span class="text-red-400">{{ job.findings_count }} finding(s)</span>{% endif %}
+              {% if job.domains_found %} · <span class="text-blue-400">{{ job.domains_found }}</span>{% endif %}
+            </p>
+          </div>
+          <i data-lucide="chevron-right" class="w-4 h-4 text-gray-600 flex-shrink-0"></i>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}<div class="px-5 py-6 text-center text-sm text-gray-500">No scans yet</div>{% endif %}
+    </div>
+
+  </div>
+</div>
+
+<script>
+const ORG_ID = {{ org.id }};
+
+function runCTForDomain(domain) {
+  launchScan('ct-subdomain', ORG_ID, `CT: ${domain}`, {domain});
+}
+
+async function clearDomains(scope) {
+  const labels = {all:'all domains', ip:'IP-detected domains', ct:'CT-discovered subdomains'};
+  const ok = await confirmModal.show(
+    'Clear domains',
+    `Remove ${labels[scope]} for this organization?`,
+    'Clear'
+  );
+  if (!ok) return;
+  const url = scope === 'all'
+    ? `/api/v1/organizations/${ORG_ID}/domains`
+    : `/api/v1/organizations/${ORG_ID}/domains?source=${scope}`;
+  const r = await fetch(url, {method:'DELETE'});
+  if (r.ok || r.status === 204) { showToast('Domains cleared'); setTimeout(() => location.reload(), 800); }
+  else showToast('Error: ' + r.status, 5000);
+}
+
+async function clearServices() {
+  const ok = await confirmModal.show(
+    'Clear services',
+    'Remove all nmap-discovered services for this organization?\nNext port scan will rediscover them.',
+    'Clear'
+  );
+  if (!ok) return;
+  const r = await fetch(`/api/v1/organizations/${ORG_ID}/services`, {method:'DELETE'});
+  if (r.ok || r.status === 204) { showToast('Services cleared'); setTimeout(() => location.reload(), 800); }
+  else showToast('Error: ' + r.status, 5000);
+}
+
+async function deleteOrganization() {
+  const ok = await confirmModal.show(
+    'Delete organization',
+    'Delete this organization and ALL its data — domains, services, findings and scan jobs?\n\nThis cannot be undone.',
+    'Delete permanently'
+  );
+  if (!ok) return;
+  const r = await fetch(`/api/v1/organizations/${ORG_ID}`, {method:'DELETE'});
+  if (r.ok || r.status === 204) window.location.href = '/organizations';
+  else showToast('Error: ' + r.status, 5000);
+}
+
+async function addDomain(event, orgId) {
+  event.preventDefault();
+  const input = event.target.fqdn;
+  const fqdn = input.value.trim();
+  if (!fqdn) return;
+  const r = await fetch(`/api/v1/organizations/${orgId}/domains`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({fqdn}),
+  });
+  if (r.ok) {
+    showToast(`Added ${fqdn}`);
+    input.value = '';
+    setTimeout(() => location.reload(), 500);
+  } else {
+    const err = await r.json().catch(() => ({}));
+    showToast(err.detail || 'Error: ' + r.status, 4000);
+  }
+}
+
+async function resolveSubdomainIps() {
+  const ok = await confirmModal.show(
+    'Resolve Subdomain IPs',
+    'This will run DNS lookups for all CT subdomains that have no resolved IP address. Subdomains that resolve will become visible in the list.',
+    'Resolve'
+  );
+  if (!ok) return;
+  showToast('Resolving IPs… this may take a moment', 4000);
+  try {
+    const r = await fetch(`/api/v1/organizations/${ORG_ID}/domains/resolve-ips`, { method: 'POST' });
+    const data = await r.json();
+    if (r.ok) {
+      showToast(data.message, 5000);
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      showToast('Error: ' + (data.detail || r.status), 5000);
+    }
+  } catch (e) {
+    showToast('Network error: ' + e.message, 5000);
+  }
+}
+
+async function deleteDomain(orgId, domainId, fqdn) {
+  const ok = await confirmModal.show(
+    'Delete domain',
+    `Remove <code class="text-indigo-300">${fqdn}</code> from this organization?`,
+    'Delete'
+  );
+  if (!ok) return;
+  const r = await fetch(`/api/v1/organizations/${orgId}/domains/${domainId}`, {method:'DELETE'});
+  if (r.ok || r.status === 204) { showToast('Domain deleted'); setTimeout(() => location.reload(), 500); }
+  else showToast('Error: ' + r.status, 5000);
+}
+</script>
+{% endblock %}

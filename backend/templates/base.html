@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-[#0b0f19] antialiased">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}LHSec{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: { DEFAULT: '#111827', hover: '#1a2332', border: '#1e293b' },
+            brand:   { DEFAULT: '#818cf8', hover: '#6366f1' },
+          }
+        }
+      }
+    }
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>[x-cloak]{display:none!important}
+    .badge-crit{@apply bg-red-950/80 text-red-300 ring-1 ring-red-800/60}
+    .badge-high{@apply bg-orange-950/80 text-orange-300 ring-1 ring-orange-800/60}
+    .badge-med {background:#42200680;color:#fde68a;box-shadow:inset 0 0 0 1px #854d0e80}
+    .badge-low {background:#17255480;color:#93c5fd;box-shadow:inset 0 0 0 1px #1e3a8a80}
+    .badge-info{background:#1f293780;color:#9ca3af;box-shadow:inset 0 0 0 1px #37415180}
+    .scrollbar-thin::-webkit-scrollbar{width:5px}
+    .scrollbar-thin::-webkit-scrollbar-track{background:transparent}
+    .scrollbar-thin::-webkit-scrollbar-thumb{background:#334155;border-radius:6px}
+  </style>
+</head>
+<body class="h-full text-gray-100 font-sans">
+
+  <!-- Sidebar -->
+  <aside class="fixed left-0 top-0 h-full w-[220px] flex flex-col z-30" style="background:#0d1117;border-right:1px solid #1e293b">
+
+    <!-- Brand -->
+    <a href="/" class="flex items-center gap-3 px-5 h-14 flex-shrink-0" style="border-bottom:1px solid #1e293b">
+      <div class="flex items-center justify-center w-7 h-7 rounded-lg" style="background:linear-gradient(135deg,#6366f1,#818cf8)">
+        <i data-lucide="shield" class="w-3.5 h-3.5 text-white"></i>
+      </div>
+      <div>
+        <span class="text-[14px] font-semibold tracking-tight text-white">LHSec</span>
+        <span class="block text-[10px] text-gray-600 -mt-0.5 tracking-wider uppercase">Security</span>
+      </div>
+    </a>
+
+    <!-- Nav -->
+    <nav class="flex-1 px-3 py-4 space-y-0.5">
+      <p class="text-[10px] font-medium text-gray-600 uppercase tracking-widest px-3 mb-2">Navigation</p>
+      {% set cur = request.url.path %}
+      {% macro navlink(href, icon, label) %}
+        {% set active = (href == '/' and cur == '/') or (href != '/' and cur.startswith(href)) %}
+        <a href="{{ href }}" style="
+            display:flex;align-items:center;gap:10px;
+            padding:8px 12px;border-radius:8px;
+            font-size:13px;font-weight:500;
+            text-decoration:none;
+            transition:background 0.15s,color 0.15s;
+            {% if active %}background:rgba(99,102,241,0.12);color:#818cf8;box-shadow:inset 0 0 0 1px rgba(99,102,241,0.2){% else %}color:#6b7280{% endif %}
+          "
+          {% if not active %}
+            onmouseover="this.style.background='rgba(255,255,255,0.04)';this.style.color='#e5e7eb'"
+            onmouseout="this.style.background='';this.style.color='#6b7280'"
+          {% endif %}>
+          <i data-lucide="{{ icon }}" style="width:15px;height:15px;flex-shrink:0;{% if active %}color:#818cf8{% else %}color:#4b5563{% endif %}"></i>
+          <span>{{ label }}</span>
+          {% if active %}<span style="margin-left:auto;width:5px;height:5px;border-radius:50%;background:#818cf8;flex-shrink:0"></span>{% endif %}
+        </a>
+      {% endmacro %}
+      {{ navlink('/', 'layout-dashboard', 'Dashboard') }}
+      {{ navlink('/organizations', 'building-2', 'Organizations') }}
+      {{ navlink('/scans', 'scan-search', 'Scan Jobs') }}
+      {{ navlink('/findings', 'bug', 'Findings') }}
+    </nav>
+
+    <!-- Footer -->
+    <div style="border-top:1px solid #1e293b;padding:14px 20px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;opacity:.7;flex-shrink:0"></span>
+        <span style="font-size:11px;color:#374151">v0.1.0-poc</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="ml-[220px] min-h-screen flex flex-col">
+    <header class="h-12 bg-surface border-b border-surface-border flex items-center px-6 flex-shrink-0 gap-3">
+      <h1 class="text-[13px] font-medium text-gray-300 tracking-wide">{% block header %}Dashboard{% endblock %}</h1>
+      <div class="ml-auto flex items-center gap-2">
+        {% block header_actions %}{% endblock %}
+      </div>
+    </header>
+    <main class="flex-1 p-6 {% block main_class %}{% endblock %}">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <!-- Global scan modal: hidden by default, toggled via window event -->
+  <div id="scanModal"
+    class="fixed inset-0 z-50 items-center justify-center bg-black/80 backdrop-blur-sm hidden">
+    <div class="bg-surface border border-surface-border rounded-2xl shadow-2xl w-full max-w-[600px] mx-4 flex flex-col max-h-[85vh]">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+        <div class="flex items-center gap-2.5">
+          <i data-lucide="terminal" class="w-4 h-4 text-gray-400"></i>
+          <span class="text-sm font-medium" data-scan-title>Scan Job</span>
+          <span data-scan-status class="text-[11px] px-2 py-0.5 rounded-full font-mono bg-blue-900/50 text-blue-300">running</span>
+          <span class="text-[11px] text-gray-600 font-mono" data-scan-jobid></span>
+        </div>
+        <button onclick="scanModal.hide()" class="text-gray-500 hover:text-gray-300 p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="px-5 pt-3 space-y-1.5">
+        <div class="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+          <div data-scan-bar class="h-full rounded-full transition-all duration-500 ease-out bg-brand animate-pulse" style="width:10%"></div>
+        </div>
+        <div class="flex justify-between text-[11px] text-gray-500"><span data-scan-stats></span><span>In progress…</span></div>
+      </div>
+      <pre data-scan-log
+        class="flex-1 overflow-y-auto font-mono text-[12px] leading-relaxed text-emerald-400/80 bg-black/40 rounded-lg m-4 p-4 min-h-[140px] max-h-[400px] scrollbar-thin"></pre>
+      <div class="px-5 py-3 border-t border-surface-border flex justify-between items-center">
+        <a data-scan-link href="#" class="text-[12px] text-brand hover:underline flex items-center gap-1"><i data-lucide="external-link" class="w-3 h-3"></i> Full log</a>
+        <div class="flex gap-2">
+          <button data-scan-refresh onclick="scanModal.hide();window.location.reload()"
+            class="px-4 py-1.5 text-[12px] bg-brand hover:bg-brand-hover rounded-lg font-medium transition-colors hidden">Refresh</button>
+          <button onclick="scanModal.hide()" class="px-4 py-1.5 text-[12px] bg-white/5 hover:bg-white/10 rounded-lg transition-colors">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    lucide.createIcons();
+
+    // ── Plain JS scan modal (no Alpine dependency) ──
+    let _scanWs = null;
+    const scanModal = {
+      show(jobId, title) {
+        const el = document.getElementById('scanModal');
+        el.classList.remove('hidden'); el.classList.add('flex');
+        el.querySelector('[data-scan-title]').textContent = title || 'Scan Job';
+        el.querySelector('[data-scan-jobid]').textContent = jobId;
+        el.querySelector('[data-scan-status]').textContent = 'running';
+        el.querySelector('[data-scan-status]').className = 'text-[11px] px-2 py-0.5 rounded-full font-mono bg-blue-900/50 text-blue-300';
+        el.querySelector('[data-scan-log]').textContent = '';
+        el.querySelector('[data-scan-bar]').style.width = '10%';
+        el.querySelector('[data-scan-bar]').className = 'h-full rounded-full transition-all duration-500 ease-out bg-brand animate-pulse';
+        el.querySelector('[data-scan-link]').href = '/scans/' + jobId;
+        this._connectWS(jobId);
+        lucide.createIcons();
+      },
+      hide() {
+        const el = document.getElementById('scanModal');
+        el.classList.add('hidden'); el.classList.remove('flex');
+        if (_scanWs) { _scanWs.close(); _scanWs = null; }
+      },
+      _connectWS(jobId) {
+        if (_scanWs) _scanWs.close();
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        _scanWs = new WebSocket(`${proto}://${location.host}/api/v1/scans/${jobId}/ws`);
+        _scanWs.onmessage = (evt) => {
+          const msg = JSON.parse(evt.data);
+          const logEl = document.querySelector('[data-scan-log]');
+          if (msg.type === 'log') {
+            logEl.textContent += msg.line + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+          } else if (msg.type === 'history') {
+            logEl.textContent = msg.lines;
+            logEl.scrollTop = logEl.scrollHeight;
+          } else if (msg.type === 'progress') {
+            const bar = document.querySelector('[data-scan-bar]');
+            if (bar) {
+              bar.style.width = msg.percent + '%';
+              bar.className = 'h-full rounded-full transition-all duration-700 ease-out bg-brand animate-pulse';
+            }
+            const statsEl = document.querySelector('[data-scan-stats]');
+            if (statsEl && msg.percent > 0) statsEl.textContent = msg.percent + '% complete';
+          } else if (msg.type === 'status') {
+            const stEl = document.querySelector('[data-scan-status]');
+            stEl.textContent = msg.status;
+            if (msg.status === 'done') {
+              stEl.className = 'text-[11px] px-2 py-0.5 rounded-full font-mono bg-emerald-900/50 text-emerald-300';
+              document.querySelector('[data-scan-bar]').style.width = '100%';
+              document.querySelector('[data-scan-bar]').className = 'h-full rounded-full transition-all duration-500 ease-out bg-emerald-500';
+              _scanWs.close(); _scanWs = null;
+              fetch(`/api/v1/scans/${jobId}/status`).then(r => r.json()).then(d => {
+                document.querySelector('[data-scan-stats]').textContent = `${d.findings_count} finding(s) · ${d.domains_found} domain(s)`;
+              });
+              document.querySelector('[data-scan-refresh]').style.display = '';
+            } else if (msg.status === 'failed') {
+              stEl.className = 'text-[11px] px-2 py-0.5 rounded-full font-mono bg-red-900/50 text-red-300';
+              document.querySelector('[data-scan-bar]').style.width = '100%';
+              document.querySelector('[data-scan-bar]').className = 'h-full rounded-full transition-all duration-500 ease-out bg-red-500';
+              _scanWs.close(); _scanWs = null;
+            }
+          }
+        };
+        _scanWs.onerror = () => { logEl.textContent += '\n[ws] Connection error — polling…\n'; this._poll(jobId); };
+      },
+      async _poll(jobId) {
+        while (true) {
+          await new Promise(r => setTimeout(r, 3000));
+          try {
+            const r = await fetch(`/api/v1/scans/${jobId}/status`);
+            const d = await r.json();
+            const logEl = document.querySelector('[data-scan-log]');
+            logEl.textContent = d.log_output || '';
+            logEl.scrollTop = logEl.scrollHeight;
+            document.querySelector('[data-scan-status]').textContent = d.status;
+            // Extract percent from last progress log line
+            const match = (d.log_output || '').match(/\](\d+)%/);
+            if (match) {
+              const pct = parseInt(match[match.length - 1]);
+              const bar = document.querySelector('[data-scan-bar]');
+              if (bar) bar.style.width = pct + '%';
+              document.querySelector('[data-scan-stats]').textContent = pct + '% complete';
+            }
+            if (d.status === 'done' || d.status === 'failed') break;
+          } catch { break; }
+        }
+      }
+    };
+
+    window.addEventListener('open-scan-modal', e => scanModal.show(e.detail.jobId, e.detail.title));
+
+    async function launchScan(endpoint, orgId, title, extraBody = {}) {
+      if (endpoint === 'nuclei') {
+        openNucleiModal(orgId, title, extraBody);
+        return;
+      }
+      const body = { organization_id: orgId, scan_type: endpoint, ...extraBody };
+      try {
+        const r = await fetch(`/api/v1/scans/${endpoint}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (!r.ok) { const err = await r.json(); showToast('Error: ' + (err.detail || JSON.stringify(err)), 5000); return; }
+        const job = await r.json();
+        scanModal.show(job.id, title);
+      } catch (e) { showToast('Network error: ' + e.message, 5000); }
+    }
+
+    // Single-target quick scan (invoked from domain rows)
+    function scanSingleTarget(host) {
+      // The org id is set by the page that calls this
+      const orgId = typeof ORG_ID !== 'undefined' ? ORG_ID : null;
+      if (!orgId) { showToast('No organization context', 4000); return; }
+      openNucleiModal(orgId, `Nuclei: ${host}`, { target: host });
+    }
+
+    // ── Nuclei profile picker ──────────────────────────────────────────
+    const NUCLEI_PROFILES = {
+      stealth:  { label: 'Stealth',  icon: 'shield',  desc: 'Low & slow. WAF-heavy, avoid blocks.',           flags: 'rl:3 c:3 t:10s' },
+      balanced: { label: 'Balanced', icon: 'scale',   desc: 'Good coverage, reasonable speed.',               flags: 'rl:20 c:10 t:10s' },
+      fast:     { label: 'Fast',     icon: 'zap',     desc: 'High concurrency. Internal networks only.',      flags: 'rl:50 c:25 t:5s' },
+    };
+    const NUCLEI_TEMPLATE_SETS = {
+      recommended:      { label: 'Recommended',   icon: 'star',        desc: 'Curated by ProjectDiscovery — CVEs, misconfigs, SSL, DNS, TCP' },
+      cves:             { label: 'CVEs',           icon: 'shield-alert', desc: 'Known CVEs only (http + network + javascript/cves)' },
+      kev:              { label: 'CISA KEV',       icon: 'triangle-alert', desc: 'CISA Known Exploited Vulnerabilities — highest priority' },
+      misconfigurations:{ label: 'Misconfigs',    icon: 'settings-2',  desc: 'Misconfigured services, exposed panels, insecure defaults' },
+      'default-login':  { label: 'Default Logins',icon: 'key-round',   desc: 'Default/weak credentials on common services' },
+    };
+    let _nucleiPendingOrgId = null, _nucleiPendingTitle = '', _nucleiPendingExtra = {};
+
+    function openNucleiModal(orgId, title, extraBody) {
+      _nucleiPendingOrgId   = orgId;
+      _nucleiPendingTitle   = title;
+      _nucleiPendingExtra   = extraBody;
+      // reset speed profile to balanced
+      document.querySelectorAll('.nuclei-profile-btn').forEach(b => {
+        const active = b.dataset.profile === 'balanced';
+        b.classList.toggle('border-brand',   active);
+        b.classList.toggle('bg-brand/10',    active);
+        b.classList.toggle('border-surface-border', !active);
+        b.classList.toggle('bg-white/[0.02]',       !active);
+      });
+      document.getElementById('nucleiSelectedProfile').value = 'balanced';
+      // reset template set to recommended
+      document.querySelectorAll('.nuclei-tset-btn').forEach(b => {
+        const active = b.dataset.tset === 'recommended';
+        b.classList.toggle('border-brand',   active);
+        b.classList.toggle('bg-brand/10',    active);
+        b.classList.toggle('border-surface-border', !active);
+        b.classList.toggle('bg-white/[0.02]',       !active);
+      });
+      document.getElementById('nucleiSelectedTset').value = 'recommended';
+      // reset severity
+      document.querySelectorAll('.nuclei-sev-btn').forEach(b => {
+        const active = b.dataset.sev === 'critical,high';
+        b.classList.toggle('border-brand', active);
+        b.classList.toggle('bg-brand/10',  active);
+        b.classList.toggle('border-surface-border', !active);
+        b.classList.toggle('bg-white/[0.02]',       !active);
+      });
+      document.getElementById('nucleiSelectedSev').value = 'critical,high';
+      const modal = document.getElementById('nucleiPickerModal');
+      modal.classList.remove('hidden'); modal.classList.add('flex');
+    }
+    function closeNucleiModal() {
+      const modal = document.getElementById('nucleiPickerModal');
+      modal.classList.add('hidden'); modal.classList.remove('flex');
+    }
+    function selectNucleiProfile(key) {
+      document.getElementById('nucleiSelectedProfile').value = key;
+      document.querySelectorAll('.nuclei-profile-btn').forEach(b => {
+        const active = b.dataset.profile === key;
+        b.classList.toggle('border-brand',   active);
+        b.classList.toggle('bg-brand/10',    active);
+        b.classList.toggle('border-surface-border', !active);
+        b.classList.toggle('bg-white/[0.02]',       !active);
+      });
+    }
+    function selectNucleiTemplateSet(key) {
+      document.getElementById('nucleiSelectedTset').value = key;
+      document.querySelectorAll('.nuclei-tset-btn').forEach(b => {
+        const active = b.dataset.tset === key;
+        b.classList.toggle('border-brand',   active);
+        b.classList.toggle('bg-brand/10',    active);
+        b.classList.toggle('border-surface-border', !active);
+        b.classList.toggle('bg-white/[0.02]',       !active);
+      });
+    }
+    function selectNucleiSev(val) {
+      document.getElementById('nucleiSelectedSev').value = val;
+      document.querySelectorAll('.nuclei-sev-btn').forEach(b => {
+        const active = b.dataset.sev === val;
+        b.classList.toggle('border-brand', active);
+        b.classList.toggle('bg-brand/10',  active);
+        b.classList.toggle('border-surface-border', !active);
+        b.classList.toggle('bg-white/[0.02]',       !active);
+      });
+    }
+    async function launchNucleiWithProfile() {
+      const profile      = document.getElementById('nucleiSelectedProfile').value;
+      const template_set = document.getElementById('nucleiSelectedTset').value;
+      const severity     = document.getElementById('nucleiSelectedSev').value;
+      closeNucleiModal();
+      const body = { organization_id: _nucleiPendingOrgId, scan_type: 'nuclei', profile, template_set, severity, ..._nucleiPendingExtra };
+      try {
+        const r = await fetch('/api/v1/scans/nuclei', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        if (!r.ok) { const err = await r.json(); showToast('Error: ' + (err.detail || JSON.stringify(err)), 5000); return; }
+        const job = await r.json();
+        scanModal.show(job.id, `${_nucleiPendingTitle} [${profile}/${template_set}]`);
+      } catch(e) { showToast('Network error: ' + e.message, 5000); }
+    }
+  </script>
+  {% block extra_scripts %}{% endblock %}
+
+  <!-- ── Nuclei Profile Picker Modal ─────────────────────────── -->
+  <div id="nucleiPickerModal" class="fixed inset-0 z-50 items-center justify-center bg-black/80 backdrop-blur-sm hidden">
+    <div class="bg-surface border border-surface-border rounded-2xl shadow-2xl w-full max-w-lg mx-4 max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between px-5 py-3.5 border-b border-surface-border">
+        <h2 class="font-medium text-sm flex items-center gap-2">
+          <i data-lucide="radar" class="w-4 h-4 text-red-400"></i> Launch Nuclei Scan
+        </h2>
+        <button onclick="closeNucleiModal()" class="text-gray-500 hover:text-gray-300 p-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="px-5 py-4 space-y-5 overflow-y-auto flex-1">
+        <!-- Template set -->
+        <div>
+          <p class="text-[11px] text-gray-500 uppercase tracking-wider mb-2">Template Set</p>
+          <div class="grid grid-cols-1 gap-1.5">
+            <button class="nuclei-tset-btn border rounded-lg px-3 py-2 text-left transition-all flex items-center gap-2.5 border-brand bg-brand/10" data-tset="recommended" onclick="selectNucleiTemplateSet('recommended')">
+              <i data-lucide="star" class="w-3.5 h-3.5 text-yellow-400 flex-shrink-0"></i>
+              <div><span class="text-[12px] font-medium text-gray-200">Recommended</span><span class="ml-1.5 text-[9px] px-1 py-0.5 rounded bg-green-950/50 text-green-400">default</span>
+              <p class="text-[11px] text-gray-500">Curated by ProjectDiscovery — CVEs, misconfigs, SSL, DNS, TCP</p></div>
+            </button>
+            <button class="nuclei-tset-btn border rounded-lg px-3 py-2 text-left transition-all flex items-center gap-2.5 border-surface-border bg-white/[0.02]" data-tset="cves" onclick="selectNucleiTemplateSet('cves')">
+              <i data-lucide="shield-alert" class="w-3.5 h-3.5 text-red-400 flex-shrink-0"></i>
+              <div><span class="text-[12px] font-medium text-gray-200">CVEs only</span>
+              <p class="text-[11px] text-gray-500">Known CVEs (http + network + javascript/cves)</p></div>
+            </button>
+            <button class="nuclei-tset-btn border rounded-lg px-3 py-2 text-left transition-all flex items-center gap-2.5 border-surface-border bg-white/[0.02]" data-tset="kev" onclick="selectNucleiTemplateSet('kev')">
+              <i data-lucide="triangle-alert" class="w-3.5 h-3.5 text-orange-400 flex-shrink-0"></i>
+              <div><span class="text-[12px] font-medium text-gray-200">CISA KEV</span>
+              <p class="text-[11px] text-gray-500">CISA Known Exploited Vulnerabilities — highest priority subset</p></div>
+            </button>
+            <button class="nuclei-tset-btn border rounded-lg px-3 py-2 text-left transition-all flex items-center gap-2.5 border-surface-border bg-white/[0.02]" data-tset="misconfigurations" onclick="selectNucleiTemplateSet('misconfigurations')">
+              <i data-lucide="settings-2" class="w-3.5 h-3.5 text-blue-400 flex-shrink-0"></i>
+              <div><span class="text-[12px] font-medium text-gray-200">Misconfigs</span>
+              <p class="text-[11px] text-gray-500">Misconfigured services, exposed panels, insecure defaults</p></div>
+            </button>
+            <button class="nuclei-tset-btn border rounded-lg px-3 py-2 text-left transition-all flex items-center gap-2.5 border-surface-border bg-white/[0.02]" data-tset="default-login" onclick="selectNucleiTemplateSet('default-login')">
+              <i data-lucide="key-round" class="w-3.5 h-3.5 text-purple-400 flex-shrink-0"></i>
+              <div><span class="text-[12px] font-medium text-gray-200">Default Logins</span>
+              <p class="text-[11px] text-gray-500">Default / weak credentials on common services</p></div>
+            </button>
+          </div>
+        </div>
+        <!-- Speed profile -->
+        <div>
+          <p class="text-[11px] text-gray-500 uppercase tracking-wider mb-2">Speed Profile</p>
+          <div class="grid grid-cols-3 gap-2">
+            <button class="nuclei-profile-btn border rounded-xl p-3 text-left transition-all border-surface-border bg-white/[0.02]" data-profile="stealth" onclick="selectNucleiProfile('stealth')">
+              <div class="flex items-center gap-1.5 mb-1.5"><i data-lucide="shield" class="w-3.5 h-3.5 text-blue-400"></i><span class="text-[12px] font-medium text-gray-200">Stealth</span></div>
+              <p class="text-[11px] text-gray-500 leading-snug">Low &amp; slow. WAF-heavy.</p>
+              <p class="text-[10px] font-mono text-gray-600 mt-1.5">rl:3 c:3 t:10s</p>
+            </button>
+            <button class="nuclei-profile-btn border rounded-xl p-3 text-left transition-all border-brand bg-brand/10" data-profile="balanced" onclick="selectNucleiProfile('balanced')">
+              <div class="flex items-center gap-1.5 mb-1.5"><i data-lucide="scale" class="w-3.5 h-3.5 text-green-400"></i><span class="text-[12px] font-medium text-gray-200">Balanced</span><span class="text-[9px] px-1 py-0.5 rounded bg-green-950/50 text-green-400">default</span></div>
+              <p class="text-[11px] text-gray-500 leading-snug">Good coverage, reasonable speed.</p>
+              <p class="text-[10px] font-mono text-gray-600 mt-1.5">rl:20 c:10 t:10s</p>
+            </button>
+            <button class="nuclei-profile-btn border rounded-xl p-3 text-left transition-all border-surface-border bg-white/[0.02]" data-profile="fast" onclick="selectNucleiProfile('fast')">
+              <div class="flex items-center gap-1.5 mb-1.5"><i data-lucide="zap" class="w-3.5 h-3.5 text-yellow-400"></i><span class="text-[12px] font-medium text-gray-200">Fast</span></div>
+              <p class="text-[11px] text-gray-500 leading-snug">High concurrency. Internal only.</p>
+              <p class="text-[10px] font-mono text-gray-600 mt-1.5">rl:50 c:25 t:5s</p>
+            </button>
+          </div>
+        </div>
+        <!-- Severity override -->
+        <div>
+          <p class="text-[11px] text-gray-500 uppercase tracking-wider mb-2">Severity Filter <span class="normal-case text-gray-600">(overrides profile default)</span></p>
+          <div class="flex gap-2">
+            <button class="nuclei-sev-btn flex-1 py-2 rounded-lg border text-[12px] transition-all border-brand bg-brand/10" data-sev="critical,high" onclick="selectNucleiSev('critical,high')">Critical &amp; High</button>
+            <button class="nuclei-sev-btn flex-1 py-2 rounded-lg border text-[12px] transition-all border-surface-border bg-white/[0.02]" data-sev="critical,high,medium" onclick="selectNucleiSev('critical,high,medium')">+ Medium</button>
+            <button class="nuclei-sev-btn flex-1 py-2 rounded-lg border text-[12px] transition-all border-surface-border bg-white/[0.02]" data-sev="critical,high,medium,low" onclick="selectNucleiSev('critical,high,medium,low')">All (excl. info)</button>
+          </div>
+        </div>
+        <input type="hidden" id="nucleiSelectedProfile" value="balanced">
+        <input type="hidden" id="nucleiSelectedTset" value="recommended">
+        <input type="hidden" id="nucleiSelectedSev" value="critical,high">
+      </div>
+      <div class="px-5 py-3.5 border-t border-surface-border flex justify-end gap-2">
+        <button onclick="closeNucleiModal()" class="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm transition-colors">Cancel</button>
+        <button onclick="launchNucleiWithProfile()" class="px-4 py-2 bg-red-900/50 hover:bg-red-900/70 border border-red-800/50 rounded-lg text-sm font-medium text-red-200 transition-colors flex items-center gap-1.5">
+          <i data-lucide="radar" class="w-4 h-4"></i> Launch Scan
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Confirm Modal (global) ─────────────────────────── -->
+  <div id="confirmModal" class="fixed inset-0 z-50 items-center justify-center bg-black/80 backdrop-blur-sm hidden">
+    <div class="bg-surface border border-surface-border rounded-2xl shadow-2xl w-full max-w-[420px] mx-4 p-6">
+      <div class="flex items-start gap-3">
+        <div class="w-10 h-10 rounded-full bg-red-950/40 flex items-center justify-center flex-shrink-0">
+          <i data-lucide="triangle-alert" class="w-5 h-5 text-red-400"></i>
+        </div>
+        <div class="flex-1">
+          <h3 id="confirmTitle" class="text-sm font-medium text-gray-100">Confirm action</h3>
+          <p id="confirmBody" class="text-[12px] text-gray-400 mt-1.5 leading-relaxed">Are you sure?</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2.5 mt-5">
+        <button onclick="confirmModal.hide(false)" class="px-4 py-1.5 text-[12px] bg-white/5 hover:bg-white/10 rounded-lg transition-colors text-gray-300">Cancel</button>
+        <button id="confirmOk" class="px-4 py-1.5 text-[12px] bg-red-600 hover:bg-red-500 rounded-lg font-medium transition-colors text-white">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast (global) -->
+  <div id="toast" class="fixed bottom-6 right-6 z-50 max-w-[380px] bg-surface border border-surface-border rounded-xl px-4 py-3 shadow-2xl hidden text-[12px] text-gray-200"></div>
+
+  <script>
+    // --- Confirm modal ---
+    const confirmModal = {
+      _resolve: null,
+      show(title, body, okLabel) {
+        const el = document.getElementById('confirmModal');
+        document.getElementById('confirmTitle').textContent = title || 'Confirm';
+        document.getElementById('confirmBody').textContent = body || '';
+        document.getElementById('confirmOk').textContent = okLabel || 'Confirm';
+        el.classList.remove('hidden'); el.classList.add('flex');
+        lucide.createIcons();
+        return new Promise(resolve => { this._resolve = resolve; });
+      },
+      hide(confirmed) {
+        const el = document.getElementById('confirmModal');
+        el.classList.add('hidden'); el.classList.remove('flex');
+        if (this._resolve) { this._resolve(confirmed); this._resolve = null; }
+      }
+    };
+    document.getElementById('confirmOk').addEventListener('click', () => confirmModal.hide(true));
+    // Close on Escape
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') confirmModal.hide(false); });
+
+    // --- Toast ---
+    function showToast(msg, duration) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.classList.remove('hidden');
+      clearTimeout(el._tid);
+      el._tid = setTimeout(() => el.classList.add('hidden'), duration || 3000);
+    }
+  </script>
+</body>
+</html>
