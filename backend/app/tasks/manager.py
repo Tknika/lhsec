@@ -14,7 +14,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime
-from typing import Dict, Set
+from typing import Dict, Set, Sequence
 
 from fastapi import WebSocket
 from sqlalchemy.orm import Session
@@ -235,7 +235,7 @@ async def _run_ct_subdomain(job_id: str, organization_id: int, domain: str) -> N
         _running.pop(job_id, None)
 
 
-async def _run_port_scan(job_id: str, organization_id: int) -> None:
+async def _run_port_scan(job_id: str, organization_id: int, profile: str = "default") -> None:
     from app.services.nmap_runner import run_nmap_scan, kill_proc as nmap_kill_proc
 
     log = _make_log_callback(job_id)
@@ -260,7 +260,7 @@ async def _run_port_scan(job_id: str, organization_id: int) -> None:
             raise ValueError("Organization has no IP ranges defined")
 
         count = await run_nmap_scan(
-            db=db, scan_job=job, targets=targets, log=log
+            db=db, scan_job=job, targets=targets, log=log, profile=profile
         )
 
         job = db.get(ScanJob, job_id)
@@ -406,7 +406,7 @@ async def _run_nuclei(
                         skipped_unresolved.append(d.fqdn)
                         continue
                     scan_domains.append((d.fqdn, d.resolved_ip))
-                elif d.source == "amass":
+                elif d.source in {"amass", "contact_email"}:
                     # Check if the root domain (or www.root) resolves to one of our IPs
                     resolved_in = False
                     for candidate in [d.fqdn, f"www.{d.fqdn}"]:
@@ -658,12 +658,378 @@ def _schedule(coro):
     return _main_loop.create_task(coro)
 
 
-def launch_port_scan(db: Session, organization_id: int) -> ScanJob:
+def launch_port_scan(db: Session, organization_id: int, profile: str = "default") -> ScanJob:
     """Create a ScanJob and schedule an nmap port scan task."""
     job = _create_job(db, organization_id, "port_scan")
-    task = _schedule(_run_port_scan(job.id, organization_id))
+    task = _schedule(_run_port_scan(job.id, organization_id, profile))
     _running[job.id] = task
     return job
+
+
+def _round_robin_target_tuples(per_org: dict[int, list[str]]) -> list[tuple[int, str]]:
+    """Interleave targets so consecutive entries rotate organizations."""
+    buckets = {k: list(v) for k, v in per_org.items() if v}
+    out: list[tuple[int, str]] = []
+    while buckets:
+        progressed = False
+        for org_id in list(buckets.keys()):
+            lst = buckets.get(org_id, [])
+            if not lst:
+                buckets.pop(org_id, None)
+                continue
+            out.append((org_id, lst.pop(0)))
+            progressed = True
+            if not lst:
+                buckets.pop(org_id, None)
+        if not progressed:
+            break
+    return out
+
+
+def _record_target_keys(target: str) -> set[str]:
+    """Generate matching keys for finding attribution."""
+    from urllib.parse import urlparse
+    keys: set[str] = {target}
+    t = target.strip()
+    if not t:
+        return keys
+    if "://" in t:
+        u = urlparse(t)
+        if u.hostname:
+            keys.add(u.hostname)
+        if u.hostname and u.port:
+            keys.add(f"{u.hostname}:{u.port}")
+        elif u.hostname and u.scheme in ("http", "https"):
+            keys.add(f"{u.hostname}:{443 if u.scheme == 'https' else 80}")
+    elif ":" in t:
+        host, _, _ = t.rpartition(":")
+        if host:
+            keys.add(host)
+    else:
+        keys.add(t)
+    return keys
+
+
+async def _probe_target_alive(target: str, timeout: float = 3.0) -> bool:
+    """Low-noise TCP reachability probe for URL/bare/service targets."""
+    from urllib.parse import urlparse
+
+    host: str | None = None
+    ports: list[int] = []
+    t = target.strip()
+    if not t:
+        return False
+
+    try:
+        if "://" in t:
+            u = urlparse(t)
+            host = u.hostname
+            if u.port:
+                ports = [u.port]
+            elif u.scheme == "https":
+                ports = [443]
+            else:
+                ports = [80]
+        elif ":" in t:
+            host, _, p = t.rpartition(":")
+            ports = [int(p)]
+        else:
+            host = t
+            ports = [443, 80]
+    except Exception:
+        return True
+
+    if not host or not ports:
+        return True
+
+    for port in ports:
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=timeout)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            continue
+    return False
+
+
+async def _run_nuclei_bulk_interleaved(
+    jobs: Sequence[tuple[str, int]],
+    *,
+    severity: str | None,
+    profile: str | None,
+    template_set: str | None,
+) -> None:
+    """Single nuclei process with interleaved cross-org targets and attribution."""
+    from app.models import Service
+    from app.services.nuclei_runner import (
+        build_target_list,
+        run_nuclei_scan,
+        nuclei_record_to_finding,
+        WAFBlockedError,
+    )
+    import socket
+
+    db: Session = SessionLocal()
+    logs = {job_id: _make_log_callback(job_id) for job_id, _ in jobs}
+    job_by_org: dict[int, ScanJob] = {}
+    findings_per_job: dict[str, int] = {jid: 0 for jid, _ in jobs}
+
+    try:
+        # mark all jobs running
+        for job_id, org_id in jobs:
+            job = db.get(ScanJob, job_id)
+            if not job:
+                continue
+            job.status = "running"
+            job.started_at = datetime.utcnow()
+            job_by_org[org_id] = job
+            db.commit()
+            await _broadcast_status(job_id, "running")
+            logs[job_id]("[batch] Interleaved run-all nuclei started")
+
+        per_org_targets: dict[int, list[str]] = {}
+        target_key_to_org: dict[str, int] = {}
+
+        # build org targets
+        for job_id, org_id in jobs:
+            org = db.get(Organization, org_id)
+            if not org:
+                continue
+            services = db.query(Service).filter_by(organization_id=org_id).all()
+            ips = [r.cidr for r in org.ip_ranges]
+            scan_domains: list[tuple[str, str | None]] = []
+            inst_ip_set = {r.cidr for r in org.ip_ranges}
+            loop = asyncio.get_event_loop()
+
+            for d in org.domains:
+                if d.source in {"crt_sh", "certspotter", "reverse_dns"}:
+                    if d.resolved_ip:
+                        scan_domains.append((d.fqdn, d.resolved_ip))
+                elif d.source in {"amass", "contact_email"}:
+                    for candidate in [d.fqdn, f"www.{d.fqdn}"]:
+                        try:
+                            ip = await loop.run_in_executor(None, socket.gethostbyname, candidate)
+                            if ip in inst_ip_set:
+                                scan_domains.append((candidate, ip))
+                                break
+                        except Exception:
+                            pass
+
+            built = build_target_list(ips, scan_domains, services=services)
+            per_org_targets[org_id] = built
+            logs[job_id](f"[batch] Built {len(built)} target(s) before precheck")
+
+        # interleaved reachability probing
+        alive_per_org: dict[int, list[str]] = {org_id: [] for _, org_id in jobs}
+        rr_probe = _round_robin_target_tuples(per_org_targets)
+        for org_id, t in rr_probe:
+            ok = await _probe_target_alive(t, timeout=3.0)
+            if ok:
+                alive_per_org.setdefault(org_id, []).append(t)
+
+        for job_id, org_id in jobs:
+            alive = len(alive_per_org.get(org_id, []))
+            dead = max(0, len(per_org_targets.get(org_id, [])) - alive)
+            logs[job_id](f"[batch] Precheck: {alive} alive / {dead} closed-filtered (interleaved across orgs)")
+
+        interleaved = _round_robin_target_tuples(alive_per_org)
+        final_targets = [t for _, t in interleaved]
+        for org_id, t in interleaved:
+            for k in _record_target_keys(t):
+                target_key_to_org[k] = org_id
+
+        if not final_targets:
+            for job_id, _ in jobs:
+                j = db.get(ScanJob, job_id)
+                if j:
+                    j.status = "done"
+                    j.finished_at = datetime.utcnow()
+                    db.commit()
+                    await _broadcast_status(job_id, "done")
+            return
+
+        def _fanout(line: str) -> None:
+            for job_id, _ in jobs:
+                logs[job_id](line)
+
+        async def _on_finding(record: dict) -> bool:
+            from urllib.parse import urlparse
+            candidates: set[str] = set()
+            host = (record.get("host") or "").strip()
+            matched = (record.get("matched-at") or record.get("url") or "").strip()
+            ip = (record.get("ip") or "").strip()
+            if host:
+                candidates.add(host)
+                if "://" in host:
+                    u = urlparse(host)
+                    if u.hostname:
+                        candidates.add(u.hostname)
+                        if u.port:
+                            candidates.add(f"{u.hostname}:{u.port}")
+            if matched:
+                candidates.add(matched)
+                if "://" in matched:
+                    u = urlparse(matched)
+                    if u.hostname:
+                        candidates.add(u.hostname)
+                        if u.port:
+                            candidates.add(f"{u.hostname}:{u.port}")
+            if ip:
+                candidates.add(ip)
+
+            org_id = next((target_key_to_org[c] for c in candidates if c in target_key_to_org), None)
+            if org_id is None and jobs:
+                org_id = jobs[0][1]
+            job = job_by_org.get(org_id)
+            if not job:
+                return False
+
+            finding = nuclei_record_to_finding(record, job.id, org_id)
+            db.add(finding)
+            findings_per_job[job.id] = findings_per_job.get(job.id, 0) + 1
+            db_job = db.get(ScanJob, job.id)
+            if db_job:
+                db_job.findings_count = findings_per_job[job.id]
+            db.commit()
+            return True
+
+        owner_job = db.get(ScanJob, jobs[0][0])
+        if not owner_job:
+            return
+
+        await run_nuclei_scan(
+            db=db,
+            scan_job=owner_job,
+            targets=final_targets,
+            log=_fanout,
+            severity=severity,
+            profile=profile,
+            template_set=template_set,
+            on_finding=_on_finding,
+        )
+
+        for job_id, _ in jobs:
+            j = db.get(ScanJob, job_id)
+            if j:
+                j.status = "done"
+                j.finished_at = datetime.utcnow()
+                db.commit()
+                await _broadcast_status(job_id, "done")
+                logs[job_id](f"[batch] Done — {j.findings_count} finding(s)")
+
+    except WAFBlockedError as waf:
+        for job_id, _ in jobs:
+            j = db.get(ScanJob, job_id)
+            if j:
+                j.status = "blocked"
+                j.error_message = str(waf)
+                j.finished_at = datetime.utcnow()
+                db.commit()
+                await _broadcast_status(job_id, "blocked")
+                logs[job_id](f"[batch] BLOCKED: {waf}")
+    except Exception as exc:
+        for job_id, _ in jobs:
+            j = db.get(ScanJob, job_id)
+            if j:
+                j.status = "failed"
+                j.error_message = str(exc)
+                j.finished_at = datetime.utcnow()
+                db.commit()
+                await _broadcast_status(job_id, "failed")
+                logs[job_id](f"[batch] FAILED: {exc}")
+    finally:
+        for job_id, _ in jobs:
+            _running.pop(job_id, None)
+        db.close()
+
+
+async def _run_bulk_sequence(
+    scan_type: str,
+    jobs: Sequence[tuple[str, int]],
+    cooldown_seconds: int = 20,
+    severity: str | None = None,
+    profile: str | None = None,
+    template_set: str | None = None,
+) -> None:
+    """Run one scan per org in sequence with cooldown, or one interleaved nuclei run."""
+    if scan_type == "nuclei":
+        await _run_nuclei_bulk_interleaved(
+            jobs,
+            severity=severity,
+            profile=profile,
+            template_set=template_set,
+        )
+        return
+
+    for i, (job_id, org_id) in enumerate(jobs):
+        if i > 0 and cooldown_seconds > 0:
+            log = _make_log_callback(job_id)
+            log(f"[batch] Run-All queue: sleeping {cooldown_seconds}s before start (org rotation/WAF safety)")
+            await asyncio.sleep(cooldown_seconds)
+
+        if scan_type == "port_scan":
+            child = asyncio.create_task(_run_port_scan(job_id, org_id, profile=profile or "default"))
+        elif scan_type == "ct_discovery":
+            child = asyncio.create_task(_run_ct_discovery(job_id, org_id))
+        else:
+            raise ValueError(f"Unsupported scan_type for bulk run: {scan_type}")
+
+        _running[job_id] = child
+        try:
+            await child
+        except asyncio.CancelledError:
+            break
+
+
+def launch_bulk_scan(
+    db: Session,
+    *,
+    organization_ids: list[int],
+    scan_type: str,
+    cooldown_seconds: int = 20,
+    severity: str | None = None,
+    profile: str | None = None,
+    template_set: str | None = None,
+) -> list[ScanJob]:
+    """
+    Queue one job per organization and execute them sequentially.
+
+    This avoids hitting a single org/WAF with a large burst by rotating orgs
+    and inserting a cooldown between jobs.
+    """
+    jobs: list[ScanJob] = []
+    job_refs: list[tuple[str, int]] = []
+
+    for org_id in organization_ids:
+        cfg: dict = {"batch": True, "cooldown_seconds": cooldown_seconds}
+        if scan_type == "nuclei":
+            cfg.update({
+                "severity": severity or "",
+                "profile": profile or "",
+                "template_set": template_set or "",
+            })
+        job = _create_job(db, org_id, scan_type, config=cfg)
+        jobs.append(job)
+        job_refs.append((job.id, org_id))
+
+    # coordinator task (shared for all jobs in this run-all request)
+    coordinator = _schedule(
+        _run_bulk_sequence(
+            scan_type,
+            job_refs,
+            cooldown_seconds=cooldown_seconds,
+            severity=severity,
+            profile=profile,
+            template_set=template_set,
+        )
+    )
+    for job in jobs:
+        _running[job.id] = coordinator
+    return jobs
 
 
 def launch_ct_subdomain(

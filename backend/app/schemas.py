@@ -109,6 +109,12 @@ class ScanJobCreate(BaseModel):
     target: Optional[str] = None          # single-target quick scan (ip/hostname/url)
 
 
+class RunAllCreate(BaseModel):
+    severity: Optional[str] = None
+    profile: Optional[str] = None
+    template_set: Optional[str] = None
+
+
 class ScanJobOut(BaseModel):
     model_config = {"from_attributes": True}
     id: str

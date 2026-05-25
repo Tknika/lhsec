@@ -8,12 +8,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Organization, ScanJob
-from app.schemas import ScanJobCreate, ScanJobOut, ScanJobStatus
+from app.schemas import ScanJobCreate, RunAllCreate, ScanJobOut, ScanJobStatus
 from app.tasks.manager import (
     launch_ct_discovery,
     launch_ct_subdomain,
     launch_nuclei_scan,
     launch_port_scan,
+    launch_bulk_scan,
     stop_job,
     kill_all_running,
     ws_manager,
@@ -96,7 +97,7 @@ async def start_port_scan(body: ScanJobCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Organization not found")
     if not org.ip_ranges:
         raise HTTPException(status_code=400, detail="Organization has no IP ranges defined")
-    job = launch_port_scan(db, body.organization_id)
+    job = launch_port_scan(db, body.organization_id, profile=body.profile)
     return job
 
 
@@ -117,6 +118,59 @@ async def start_nuclei_scan(body: ScanJobCreate, db: Session = Depends(get_db)):
         template_set=body.template_set, target=body.target,
     )
     return job
+
+
+@router.post("/run-all/{scan_type}", response_model=List[ScanJobOut], status_code=202)
+async def start_run_all(
+    scan_type: str,
+    body: Optional[RunAllCreate] = None,
+    cooldown_seconds: int = 20,
+    db: Session = Depends(get_db),
+):
+    """
+    Queue scans for all eligible organizations and execute in rotated sequence.
+
+    Supported scan_type: port-scan | ct-discovery | nuclei
+    """
+    mapping = {
+        "port-scan": "port_scan",
+        "ct-discovery": "ct_discovery",
+        "nuclei": "nuclei",
+    }
+    internal_type = mapping.get(scan_type)
+    if not internal_type:
+        raise HTTPException(status_code=400, detail="Invalid scan type for run-all")
+
+    orgs = db.query(Organization).order_by(Organization.name.asc()).all()
+    eligible_ids: list[int] = []
+    for org in orgs:
+        if internal_type in ("port_scan", "ct_discovery"):
+            if org.ip_ranges:
+                eligible_ids.append(org.id)
+        elif internal_type == "nuclei":
+            if org.ip_ranges or org.domains:
+                eligible_ids.append(org.id)
+
+    if not eligible_ids:
+        raise HTTPException(status_code=400, detail="No eligible organizations for this run-all action")
+
+    severity = body.severity if body else None
+    profile = body.profile if body else None
+    template_set = body.template_set if body else None
+    # Safer default for run-all nuclei
+    if internal_type == "nuclei" and not profile:
+        profile = "stealth"
+
+    jobs = launch_bulk_scan(
+        db,
+        organization_ids=eligible_ids,
+        scan_type=internal_type,
+        cooldown_seconds=max(0, min(cooldown_seconds, 300)),
+        severity=severity,
+        profile=profile,
+        template_set=template_set,
+    )
+    return jobs
 
 
 # ── Stop / Kill running jobs ─────────────────────────────────────────────────

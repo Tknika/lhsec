@@ -20,6 +20,7 @@ from app.schemas import (
     DomainOut,
 )
 from app.services.importer import import_csv, import_json
+from app.services.contact_domains import ensure_contact_domain
 from slugify import slugify
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -75,6 +76,7 @@ def create_organization(body: OrganizationCreate, db: Session = Depends(get_db))
     for cidr in body.ips:
         db.add(IpRange(organization_id=org.id, cidr=cidr))
 
+    ensure_contact_domain(db, org)
     db.commit()
     db.refresh(org)
     return org
@@ -97,6 +99,7 @@ def update_organization(
         org.contact_email = body.contact_email
     if body.notes is not None:
         org.notes = body.notes
+    ensure_contact_domain(db, org)
     db.commit()
     db.refresh(org)
     return org
@@ -235,6 +238,29 @@ def clear_services(organization_id: int, db: Session = Depends(get_db)):
 
 
 # ── Import ────────────────────────────────────────────────────────────────────
+
+@router.post("/domains/from-contacts")
+def seed_domains_from_contacts(db: Session = Depends(get_db)):
+    """Backfill root domains from contact_email for all organizations."""
+    orgs = db.query(Organization).all()
+    created = 0
+    skipped = 0
+
+    for org in orgs:
+        inserted = ensure_contact_domain(db, org)
+        if inserted:
+            created += 1
+        else:
+            skipped += 1
+
+    db.commit()
+    return {
+        "organizations": len(orgs),
+        "created": created,
+        "skipped": skipped,
+        "message": f"Created {created} contact-email domain(s) across {len(orgs)} organization(s).",
+    }
+
 
 @router.post("/{organization_id}/domains/resolve-ips")
 async def resolve_domain_ips(organization_id: int, db: Session = Depends(get_db)):

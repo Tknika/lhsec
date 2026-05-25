@@ -144,6 +144,9 @@ class Settings(BaseSettings):
         "8000,8001,8008,8080,8081,8082,8083,8443,8444,8888,"
         "9000,9090,9200,9443,10000,27017,28017"
     )
+    # Stealth profile settings
+    nmap_stealth_top_ports: int = 200
+    nmap_stealth_version_intensity: int = 3
 
     # App
     app_debug: bool = True

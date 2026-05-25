@@ -5,11 +5,25 @@
 
 {% block header_actions %}
 {% set running_count = jobs | selectattr('status', 'equalto', 'running') | list | length %}
-{% if running_count > 0 %}
-<button onclick="killAll()" class="px-3 py-1.5 text-[12px] border border-red-800/40 text-red-400 hover:bg-red-950/30 rounded-lg transition-colors flex items-center gap-1.5">
-  <i data-lucide="square" class="w-3.5 h-3.5"></i> Kill All Running ({{ running_count }})
-</button>
-{% endif %}
+<div class="flex items-center gap-2">
+  <button onclick="runAll('port-scan')" class="px-3 py-1.5 text-[12px] border border-emerald-800/40 text-emerald-300 hover:bg-emerald-950/30 rounded-lg transition-colors flex items-center gap-1.5">
+    <i data-lucide="network" class="w-3.5 h-3.5"></i> Run All Port Scans
+  </button>
+  <button onclick="runAll('port-scan-stealth')" class="px-3 py-1.5 text-[12px] border border-emerald-800/30 text-emerald-400/60 hover:bg-emerald-950/20 rounded-lg transition-colors flex items-center gap-1.5">
+    <i data-lucide="eye-off" class="w-3.5 h-3.5"></i> Stealth
+  </button>
+  <button onclick="runAll('ct-discovery')" class="px-3 py-1.5 text-[12px] border border-blue-800/40 text-blue-300 hover:bg-blue-950/30 rounded-lg transition-colors flex items-center gap-1.5">
+    <i data-lucide="search-code" class="w-3.5 h-3.5"></i> Run All IP Discovery
+  </button>
+  <button onclick="runAll('nuclei')" class="px-3 py-1.5 text-[12px] border border-orange-800/40 text-orange-300 hover:bg-orange-950/30 rounded-lg transition-colors flex items-center gap-1.5">
+    <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i> Run All Nuclei
+  </button>
+  {% if running_count > 0 %}
+  <button onclick="killAll()" class="px-3 py-1.5 text-[12px] border border-red-800/40 text-red-400 hover:bg-red-950/30 rounded-lg transition-colors flex items-center gap-1.5">
+    <i data-lucide="square" class="w-3.5 h-3.5"></i> Kill All Running ({{ running_count }})
+  </button>
+  {% endif %}
+</div>
 {% endblock %}
 
 {% block content %}
@@ -76,6 +90,44 @@
 </div>
 
 <script>
+async function runAll(kind, extraOpts = {}){
+  const labels = {
+    'port-scan': 'Port Scan (default)',
+    'port-scan-stealth': 'Port Scan (stealth)',
+    'ct-discovery': 'IP Discovery',
+    'nuclei': 'Nuclei (Stealth by default)'
+  };
+  const description = kind === 'port-scan-stealth'
+    ? 'Run low-and-slow SYN scans across 200+ top ports. Designed to evade rate-based blocking, IDS and WAF triggers.'
+    : `Queue this scan for all eligible organizations with 20s cooldown between orgs to reduce WAF/firewall pressure?`;
+  const ok = await confirmModal.show(
+    `Run All ${labels[kind]}`,
+    description,
+    'Queue All'
+  );
+  if (!ok) return;
+
+  try {
+    let endpoint = kind === 'port-scan-stealth' ? 'port-scan' : kind;
+    const opts = kind === 'nuclei' ? {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({profile: 'stealth', severity: 'critical,high', template_set: 'recommended'})
+    } : kind === 'port-scan-stealth' ? {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({profile: 'stealth'})
+    } : { method: 'POST' };
+    const r = await fetch(`/api/v1/scans/run-all/${endpoint}?cooldown_seconds=20`, opts);
+    const d = await r.json();
+    if (!r.ok) { showToast('Error: ' + (d.detail || r.status), 5000); return; }
+    showToast(`Queued ${d.length} job(s)`, 4000);
+    setTimeout(() => location.reload(), 1200);
+  } catch (e) {
+    showToast('Network error: ' + e.message, 5000);
+  }
+}
+
 async function killAll(){
   const ok = await confirmModal.show(
     'Kill All Running Jobs',

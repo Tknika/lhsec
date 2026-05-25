@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Organization, IpRange
 from app.schemas import ImportResult
+from app.services.contact_domains import ensure_contact_domain
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -94,6 +95,8 @@ def _upsert_organization(
         if cidr not in existing_cidrs:
             db.add(IpRange(organization_id=org.id, cidr=cidr))
             existing_cidrs.add(cidr)
+
+    ensure_contact_domain(db, org)
 
 
 # ── CSV import ────────────────────────────────────────────────────────────────

@@ -1,8 +1,15 @@
 """
 Nmap port-scan runner.
 
-Executes nmap -sV against organization IPs, parses the XML output,
+Executes nmap against organization IPs, parses the XML output,
 and upserts discovered services into the `services` table.
+
+Supports two scan modes via the `profile` parameter:
+  - "stealth": Syn-scan (-sS) with low timing (-T1), random host order,
+               scan delay, service version detection across top 200+ ports.
+               Designed to avoid rate-based blocking, IDS, and WAF triggers.
+  - "default": TCP connect scan (-sT) with normal timing (-T4),
+                -sV on 48 common ports. Fast but noisy.
 """
 from __future__ import annotations
 
@@ -21,6 +28,50 @@ LogCallback = Callable[[str], None]
 
 # Module-level registry so stop_job can kill the nmap subprocess
 _running_procs: Dict[str, "asyncio.subprocess.Process"] = {}
+
+
+# ---------------------------------------------------------------------------
+# Nmap command builders (per profile)
+# ---------------------------------------------------------------------------
+
+def _build_stealth_cmd(nmap_bin: str, targets: list[str]) -> list[str]:
+    """
+    Build a low-and-slow nmap command designed to avoid rate-based blocking,
+    IDS triggers and WAF rate-limiters.
+
+    Key techniques:
+      -sS           SYN stealth (no full TCP handshake) — quieter and faster
+      -T1           Sneaky timing: inter-probe delay ≈ 15s, 1 port in parallel
+      --randomize-hosts   Shuffle target order so no sequential IP scanning
+      --scan-delay  5s    Extra 5s pause between probes
+      --top-ports   …     Top 200+ most common service ports
+      -sV --version-intensity 3    Aggressive version fingerprinting (probe 2-9)
+      --max-retries 1     Don't hammer; one retry if probe lost
+      --script-timeout 15s  Cap NSE scripts
+      --host-timeout 10m    Eventually give up on a single dead host
+      --min-parallelism 1 / --max-parallelism 1  Single-thread scanning
+      -oX -          XML to stdout
+    """
+    ports = settings.nmap_stealth_top_ports
+
+    return [
+        nmap_bin,
+        "-sS",                    # SYN stealth scan (requires root / CAP_NET_RAW)
+        "-T1",                    # Sneaky: inter-probe delay ~15 seconds
+        "--randomize-hosts",      # Shuffle target order
+        "--scan-delay", "5s",     # +5s between probes (cumulative with T1)
+        "-sV",                    # Service version detection
+        "--version-intensity", str(settings.nmap_stealth_version_intensity),
+        "--max-retries", "1",     # One retry if probe lost — no hammering
+        "--open",                 # Only report open ports
+        "--top-ports", str(ports),
+        "--script-timeout", "15s",
+        "--host-timeout", "10m",
+        "--min-parallelism", "1",
+        "--max-parallelism", "1",
+        "--max-rtt-timeout", "2s",  # Be patient with slow links; -T1 caps it anyway
+        "-oX", "-",              # XML output to stdout
+    ] + targets
 
 
 def kill_proc(job_id: str) -> bool:
@@ -144,9 +195,15 @@ async def run_nmap_scan(
     scan_job: ScanJob,
     targets: list[str],   # IPs and CIDRs
     log: LogCallback,
+    profile: str = "default",  # "default" or "stealth"
 ) -> int:
     """
-    Run nmap -sV against *targets*, persist discovered services, return service count.
+    Run nmap against *targets*, persist discovered services, return service count.
+
+    Profiles:
+      - "stealth": SYN scan, T1 timing, randomized hosts, scan-delay,
+                   top 200+ ports with version intensity 3.
+      - "default": TCP connect, T4 timing, -sV on configured ports.
     """
     nmap_bin = settings.nmap_binary
     if not shutil.which(nmap_bin):
@@ -161,19 +218,24 @@ async def run_nmap_scan(
 
     ports = settings.nmap_ports
 
-    cmd = [
-        nmap_bin,
-        "-sV",           # service/version detection
-        "--open",        # only show open ports
-        "-T4",           # aggressive timing (safe for internet targets)
-        "-p", ports,
-        "--script-timeout", "10s",
-        "-oX", "-",      # XML output to stdout
-        "--host-timeout", "5m",  # give up on unresponsive hosts
-    ] + targets
+    if profile == "stealth":
+        cmd = _build_stealth_cmd(nmap_bin, targets)
+        port_desc = "top ports"
+    else:
+        cmd = [
+            nmap_bin,
+            "-sV",           # service/version detection
+            "--open",        # only show open ports
+            "-T4",           # aggressive timing (safe for internet targets)
+            "-p", ports,
+            "--script-timeout", "10s",
+            "-oX", "-",      # XML output to stdout
+            "--host-timeout", "5m",  # give up on unresponsive hosts
+        ] + targets
+        port_desc = f"{len(ports.split(','))} ports"
 
-    log(f"[nmap] Scanning {len(targets)} target(s) across {len(ports.split(','))} ports…")
-    log(f"[nmap] Running: {nmap_bin} -sV --open -T4 -p <{len(ports.split(','))} ports> -oX - {' '.join(targets)}")
+    log(f"[nmap] [{profile.upper()}] Scanning {len(targets)} target(s) — {port_desc}…")
+    log(f"[nmap] Running: {nmap_bin} {' '.join(cmd[1:8])} … {' '.join(targets)}")
 
     xml_buf: list[str] = []
     services_count = 0

@@ -15,7 +15,7 @@ import socket
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Callable, Dict, Awaitable
 
 from sqlalchemy.orm import Session
 
@@ -397,6 +397,7 @@ async def run_nuclei_scan(
     template_set: str | None = None,
     extra_args: list[str] | None = None,
     progress_callback: Callable[[int], None] | None = None,
+    on_finding: Callable[[dict], bool | Awaitable[bool]] | None = None,
 ) -> int:
     """
     Execute nuclei against *targets*, stream output to *log*, persist findings.
@@ -567,12 +568,18 @@ async def run_nuclei_scan(
                 host = record.get("host", "?")
                 log(f"[nuclei] \u2714 [{severity_val.upper()}] {name} @ {host}")
 
-                finding = nuclei_record_to_finding(record, scan_job.id, scan_job.organization_id)
-                db.add(finding)
-
-                findings_count += 1
-                scan_job.findings_count = findings_count
-                db.commit()
+                if on_finding:
+                    handled = on_finding(record)
+                    if asyncio.iscoroutine(handled):
+                        handled = await handled
+                    if handled:
+                        findings_count += 1
+                else:
+                    finding = nuclei_record_to_finding(record, scan_job.id, scan_job.organization_id)
+                    db.add(finding)
+                    findings_count += 1
+                    scan_job.findings_count = findings_count
+                    db.commit()
             # (stats lines appear on stderr, not stdout — nothing to do here)
 
         await stderr_task
