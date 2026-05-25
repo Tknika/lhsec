@@ -195,15 +195,15 @@ async def run_nmap_scan(
     scan_job: ScanJob,
     targets: list[str],   # IPs and CIDRs
     log: LogCallback,
-    profile: str | None = "default",  # "default" or "stealth"
+    profile: str | None = "stealth",  # "stealth" (default, safe) or "default" (fast, noisy)
 ) -> int:
     """
     Run nmap against *targets*, persist discovered services, return service count.
 
     Profiles:
       - "stealth": SYN scan, T1 timing, randomized hosts, scan-delay,
-                   top 200+ ports with version intensity 3.
-      - "default": TCP connect, T4 timing, -sV on configured ports.
+                   top 200+ ports with version intensity 3. Default — avoids firewall blocks.
+      - "default": TCP connect, T4 timing, -sV on configured ports. Fast but may trigger IDS/IPS.
     """
     nmap_bin = settings.nmap_binary
     if not shutil.which(nmap_bin):
@@ -219,7 +219,7 @@ async def run_nmap_scan(
     ports = settings.nmap_ports
 
     # Normalize profile from API input (can be null/empty)
-    requested_profile = (profile or "default").strip().lower()
+    requested_profile = (profile or "stealth").strip().lower()
     normalized_profile = {
         "stealth": "stealth",
         "default": "default",

@@ -235,7 +235,7 @@ async def _run_ct_subdomain(job_id: str, organization_id: int, domain: str) -> N
         _running.pop(job_id, None)
 
 
-async def _run_port_scan(job_id: str, organization_id: int, profile: str | None = "default") -> None:
+async def _run_port_scan(job_id: str, organization_id: int, profile: str | None = "stealth") -> None:
     from app.services.nmap_runner import run_nmap_scan, kill_proc as nmap_kill_proc
 
     log = _make_log_callback(job_id)
@@ -684,8 +684,8 @@ def _schedule(coro):
     return _main_loop.create_task(coro)
 
 
-def launch_port_scan(db: Session, organization_id: int, profile: str | None = "default") -> ScanJob:
-    """Create a ScanJob and schedule an nmap port scan task."""
+def launch_port_scan(db: Session, organization_id: int, profile: str | None = "stealth") -> ScanJob:
+    """Create a ScanJob and schedule an nmap port scan task (stealth profile by default to avoid firewall blocks)."""
     job = _create_job(db, organization_id, "port_scan")
     task = _schedule(_run_port_scan(job.id, organization_id, profile))
     _running[job.id] = task
@@ -998,7 +998,7 @@ async def _run_bulk_sequence(
             await asyncio.sleep(cooldown_seconds)
 
         if scan_type == "port_scan":
-            child = asyncio.create_task(_run_port_scan(job_id, org_id, profile=profile or "default"))
+            child = asyncio.create_task(_run_port_scan(job_id, org_id, profile=profile or "stealth"))
         elif scan_type == "ct_discovery":
             child = asyncio.create_task(_run_ct_discovery(job_id, org_id))
         else:

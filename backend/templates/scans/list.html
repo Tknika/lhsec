@@ -9,8 +9,8 @@
   <button onclick="runAll('port-scan')" class="px-3 py-1.5 text-[12px] border border-emerald-800/40 text-emerald-300 hover:bg-emerald-950/30 rounded-lg transition-colors flex items-center gap-1.5">
     <i data-lucide="network" class="w-3.5 h-3.5"></i> Run All Port Scans
   </button>
-  <button onclick="runAll('port-scan-stealth')" class="px-3 py-1.5 text-[12px] border border-emerald-800/30 text-emerald-400/60 hover:bg-emerald-950/20 rounded-lg transition-colors flex items-center gap-1.5">
-    <i data-lucide="eye-off" class="w-3.5 h-3.5"></i> Stealth
+  <button onclick="runAll('port-scan-fast')" class="px-3 py-1.5 text-[12px] border border-emerald-800/30 text-emerald-400/60 hover:bg-emerald-950/20 rounded-lg transition-colors flex items-center gap-1.5">
+    <i data-lucide="zap" class="w-3.5 h-3.5"></i> Fast
   </button>
   <button onclick="runAll('ct-discovery')" class="px-3 py-1.5 text-[12px] border border-blue-800/40 text-blue-300 hover:bg-blue-950/30 rounded-lg transition-colors flex items-center gap-1.5">
     <i data-lucide="search-code" class="w-3.5 h-3.5"></i> Run All IP Discovery
@@ -92,13 +92,13 @@
 <script>
 async function runAll(kind, extraOpts = {}){
   const labels = {
-    'port-scan': 'Port Scan (default)',
-    'port-scan-stealth': 'Port Scan (stealth)',
+    'port-scan': 'Port Scan (stealth)',
+    'port-scan-fast': 'Port Scan (fast)',
     'ct-discovery': 'IP Discovery',
     'nuclei': 'Nuclei (Stealth by default)'
   };
-  const description = kind === 'port-scan-stealth'
-    ? 'Run low-and-slow SYN scans across 200+ top ports. Designed to evade rate-based blocking, IDS and WAF triggers.'
+  const description = kind === 'port-scan-fast'
+    ? 'Fast scan using -T4 aggressive timing on 48 common ports. Warning: may trigger firewall blocks on external networks.'
     : `Queue this scan for all eligible organizations with 20s cooldown between orgs to reduce WAF/firewall pressure?`;
   const ok = await confirmModal.show(
     `Run All ${labels[kind]}`,
@@ -108,15 +108,15 @@ async function runAll(kind, extraOpts = {}){
   if (!ok) return;
 
   try {
-    let endpoint = kind === 'port-scan-stealth' ? 'port-scan' : kind;
+    let endpoint = kind === 'port-scan-fast' ? 'port-scan' : kind;
     const opts = kind === 'nuclei' ? {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({profile: 'stealth', severity: 'critical,high', template_set: 'recommended'})
-    } : kind === 'port-scan-stealth' ? {
+    } : kind === 'port-scan-fast' ? {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({profile: 'stealth'})
+      body: JSON.stringify({profile: 'default'})
     } : { method: 'POST' };
     const r = await fetch(`/api/v1/scans/run-all/${endpoint}?cooldown_seconds=20`, opts);
     const d = await r.json();
