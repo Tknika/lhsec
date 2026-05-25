@@ -29,16 +29,26 @@ SEVERITY_ORDER = ["critical", "high", "medium", "low", "info", "unknown"]
 # WAF/firewall block detection via error rate.
 # The `errors` field in nuclei stats is a GLOBAL counter across ALL hosts and templates,
 # NOT a per-host counter.  A few errors from dead subdomains is completely normal.
-# Nuclei's own -mhe flag (default: 30) already drops unresponsive hosts per-host.
+# Nuclei's own -mhe flag (configurable via NUCLEI_MAX_HOST_ERROR, default 100)
+# already drops unresponsive hosts per-host.
 #
 # We only abort when BOTH conditions are met:
-#   1. At least WAF_MIN_REQUESTS have been sent (enough sample)
-#   2. The error rate (errors/requests) exceeds WAF_ERROR_RATE_THRESHOLD
+#   1. At least NUCLEI_WAF_MIN_REQUESTS requests have been sent (enough sample)
+#   2. The error rate (errors/requests) exceeds NUCLEI_WAF_ERROR_RATE_THRESHOLD
 #
-# Example: 7 errors over 4540 requests = 0.15% → NOT a block
-#          450 errors over 800 requests = 56%  → likely blocked
-WAF_MIN_REQUESTS = 30           # minimum sample before checking error rate
-WAF_ERROR_RATE_THRESHOLD = 0.40  # 40%+ error rate → abort
+# Default: 200 min requests, 70% error rate threshold — generous to avoid
+# false-positives from dead hosts and transient network issues.
+#
+# Example: 7 errors over 4540 requests = 0.15% → NOT a block  ✓
+#          450 errors over 800 requests = 56%  → NOT a block  ✓ (below 70%)
+#          800 errors over 1000 requests = 80% → BLOCKED  ⚠
+#
+# Set NUCLEI_WAF_ERROR_RATE_THRESHOLD=1.0 to disable auto-abort entirely.
+WAF_MIN_REQUESTS = 200           # minimum sample before checking error rate
+WAF_ERROR_RATE_THRESHOLD = 0.70  # 70%+ error rate → abort (generous: avoids false-positives)
+# NOTE: actual threshold is read from settings.nuclei_waf_error_rate_threshold
+#       (configurable via NUCLEI_WAF_ERROR_RATE_THRESHOLD env var).
+#       The constants above only serve as documentation of the default values.
 
 
 class WAFBlockedError(RuntimeError):
@@ -452,13 +462,13 @@ async def run_nuclei_scan(
         cmd += ["-severity", severity]
 
     # -mhe (max-host-error): nuclei drops a host after this many per-host network errors.
-    # Floor raised to 50: with -bs 50 and many targets, a few drops per host is normal.
+    # Floor set to config value; with many targets, a few drops per host is normal.
     try:
         c_idx = profile_flags.index("-c")
         c_val = int(profile_flags[c_idx + 1])
-        cmd += ["-mhe", str(max(c_val, 50))]
+        cmd += ["-mhe", str(max(c_val, settings.nuclei_max_host_error))]
     except (ValueError, IndexError):
-        cmd += ["-mhe", "50"]
+        cmd += ["-mhe", str(settings.nuclei_max_host_error)]
 
     if extra_args:
         cmd.extend(extra_args)
@@ -516,11 +526,11 @@ async def run_nuclei_scan(
                             log(f"[nuclei] heartbeat: {pct:3d}%  {reqs} reqs  {matched} matched  {duration}{note}")
                         # WAF block detection: abort only on sustained high error rate
                         # (not on low absolute counts — a few dead hosts is normal)
-                        if reqs >= WAF_MIN_REQUESTS and errs > 0:
+                        if reqs >= settings.nuclei_waf_min_requests and errs > 0:
                             rate = errs / reqs
-                            if rate >= WAF_ERROR_RATE_THRESHOLD:
+                            if rate >= settings.nuclei_waf_error_rate_threshold:
                                 log(f"[nuclei] ⚠️  WAF/firewall block detected: "
-                                    f"{errs}/{reqs} requests failed ({rate:.0%} error rate ≥ {WAF_ERROR_RATE_THRESHOLD:.0%} threshold) — aborting.")
+                                    f"{errs}/{reqs} requests failed ({rate:.0%} error rate ≥ {settings.nuclei_waf_error_rate_threshold:.0%} threshold) — aborting.")
                                 proc.kill()
                                 raise WAFBlockedError(errs, reqs, rate)
                     except WAFBlockedError:

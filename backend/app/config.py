@@ -132,6 +132,18 @@ class Settings(BaseSettings):
     nuclei_binary: str = "nuclei"
     nuclei_default_severity: str = "critical,high"
     nuclei_results_dir: str = "../data/nuclei_results"
+    # WAF block detection: abort the scan only when error rate (errors/requests)
+    # exceeds this threshold across ALL hosts.  Default 0.70 means 70% of requests
+    # must fail before we kill the scan — high enough to avoid false-positives from
+    # dead hosts and transient network errors.
+    nuclei_waf_error_rate_threshold: float = 0.70
+    # Minimum number of requests before we start checking the error rate.
+    # Prevents false aborts early in the scan before enough data exists.
+    nuclei_waf_min_requests: int = 200
+    # Per-host network error limit (nuclei -mhe flag).  Nuclei drops a host after
+    # this many errors on that specific host.  Default 100 is generous for WAF-heavy
+    # environments.
+    nuclei_max_host_error: int = 100
 
     # httpx (projectdiscovery) — for pre-scan target filtering
     httpx_binary: str = str(Path.home() / "go" / "bin" / "httpx")
