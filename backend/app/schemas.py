@@ -180,5 +180,7 @@ class ServiceOut(BaseModel):
     extra_info: Optional[str]
     scheme: str
     is_http: bool
+    waf_name: Optional[str] = None
+    waf_detected_at: Optional[datetime] = None
     first_seen: datetime
     last_seen: datetime

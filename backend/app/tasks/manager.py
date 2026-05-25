@@ -263,6 +263,19 @@ async def _run_port_scan(job_id: str, organization_id: int, profile: str = "defa
             db=db, scan_job=job, targets=targets, log=log, profile=profile
         )
 
+        # After port scan, run WAF detection on discovered web services
+        try:
+            from app.services.wafw00f_runner import detect_waf_for_services
+            waf_count = await detect_waf_for_services(
+                db=db,
+                services=db.query(Service).filter_by(organization_id=organization_id).all(),
+                log=log,
+            )
+            if waf_count:
+                log(f"[wafw00f] Detected {waf_count} WAF(s) across web services.")
+        except Exception as waf_exc:
+            log(f"[wafw00f] WAF detection skipped (non-critical): {waf_exc}")
+
         job = db.get(ScanJob, job_id)
         job.domains_found = count   # reuse field to show service count
         job.status = "done"
@@ -448,6 +461,18 @@ async def _run_nuclei(
         # Non-HTTP service targets (host:port like 1.2.3.4:22, example.com:3306)
         # bypass httpx entirely — they'd be filtered out as "dead" since httpx
         # only speaks HTTP. Pass them directly to nuclei for JS/network templates.
+
+        # ── WAF-awareness log ────────────────────────────────────────────
+        waf_services = [s for s in services if s.waf_name and s.is_http]
+        if waf_services:
+            by_waf: dict[str, list[str]] = {}
+            for s in waf_services:
+                by_waf.setdefault(s.waf_name, []).append(f"{s.scheme}://{s.ip}:{s.port}")
+            log(f"[nuclei] ⚠ Known WAFs across {len(waf_services)} endpoint(s):")
+            for name, urls in by_waf.items():
+                log(f"[nuclei]    {name}: {', '.join(urls)}")
+        # ─────────────────────────────────────────────────────────────────
+
         if target:
             targets = all_targets  # already filtered above (single-target)
         else:

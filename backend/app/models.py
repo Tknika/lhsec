@@ -186,6 +186,9 @@ class Service(Base):
     # tunnel: ssl | tls (indicates HTTPS even when service_name is "http")
     tunnel: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     extra_info: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # WAF detection via wafw00f (cached until re-scanned)
+    waf_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    waf_detected_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 

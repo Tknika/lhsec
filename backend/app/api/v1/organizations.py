@@ -229,6 +229,23 @@ def list_services(organization_id: int, db: Session = Depends(get_db)):
     )
 
 
+@router.post("/{organization_id}/services/detect-waf", response_model=dict)
+async def detect_waf(organization_id: int, db: Session = Depends(get_db)):
+    """Re-run WAF detection on all web services for this organization."""
+    _get_or_404(db, organization_id)
+    from app.services.wafw00f_runner import detect_waf_for_services
+
+    services = db.query(Service).filter_by(organization_id=organization_id).all()
+
+    # Use a temporary log collector
+    log_lines: list[str] = []
+    def _collector(msg: str):
+        log_lines.append(msg)
+
+    count = await detect_waf_for_services(db=db, services=services, log=_collector, force=True)
+    return {"detected": count, "log": log_lines}
+
+
 @router.delete("/{organization_id}/services", status_code=204)
 def clear_services(organization_id: int, db: Session = Depends(get_db)):
     """Delete all discovered services for an organization."""

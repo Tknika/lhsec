@@ -136,7 +136,14 @@
           Services
           <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-950/60 text-emerald-400 font-mono">nmap</span>
         </h2>
-        <span class="text-[11px] text-gray-500">{{ services|length }}</span>
+        <div class="flex items-center gap-2">
+          {% if services|length > 0 %}
+          <button onclick="detectWaf()" title="Re-run WAF detection" class="text-[10px] text-orange-400/60 hover:text-orange-400 transition-colors">
+            <i data-lucide="shield" class="w-3 h-3"></i>
+          </button>
+          {% endif %}
+          <span class="text-[11px] text-gray-500">{{ services|length }}</span>
+        </div>
       </div>
       {% if services %}
       <div class="max-h-96 overflow-y-auto scrollbar-thin divide-y divide-surface-border">
@@ -145,9 +152,18 @@
           <p class="text-[11px] text-gray-500 font-mono mb-1.5">{{ ip }}</p>
           <div class="flex flex-wrap gap-1.5">
             {% for svc in ip_svcs | sort(attribute='port') %}
-            {% set badge_color = 'bg-emerald-950/40 text-emerald-300' if svc.is_http else 'bg-white/5 text-gray-400' %}
-            <span class="text-[11px] px-2 py-0.5 rounded-full font-mono {{ badge_color }} border border-white/5" title="{{ svc.product or '' }} {{ svc.version or '' }}">
+            {% if svc.is_http %}
+              {% if svc.waf_name %}
+                {% set badge_color = 'bg-red-950/40 text-red-300' %}
+              {% else %}
+                {% set badge_color = 'bg-emerald-950/40 text-emerald-300' %}
+              {% endif %}
+            {% else %}
+              {% set badge_color = 'bg-white/5 text-gray-400' %}
+            {% endif %}
+            <span class="text-[11px] px-2 py-0.5 rounded-full font-mono {{ badge_color }} border border-white/5" title="{{ svc.product or '' }} {{ svc.version or '' }}{% if svc.waf_name %} | WAF: {{ svc.waf_name }}{% endif %}">
               {{ svc.port }}/{{ svc.service_name or svc.protocol }}{% if svc.tunnel %}/{{ svc.tunnel }}{% endif %}
+              {% if svc.waf_name %}<span class="ml-0.5 text-[9px] text-red-400/80">🛡</span>{% endif %}
             </span>
             {% endfor %}
           </div>
@@ -465,6 +481,25 @@ async function deleteDomain(orgId, domainId, fqdn) {
   const r = await fetch(`/api/v1/organizations/${orgId}/domains/${domainId}`, {method:'DELETE'});
   if (r.ok || r.status === 204) { showToast('Domain deleted'); setTimeout(() => location.reload(), 500); }
   else showToast('Error: ' + r.status, 5000);
+}
+
+async function detectWaf() {
+  const btn = document.querySelector('[onclick="detectWaf()"] i');
+  if (btn) btn.classList.add('animate-spin');
+  try {
+    const r = await fetch(`/api/v1/organizations/${ORG_ID}/services/detect-waf`, { method: 'POST' });
+    const data = await r.json();
+    if (r.ok) {
+      showToast(data.detected > 0
+        ? `Detected ${data.detected} WAF(s) — ${data.detected} endpoint(s) protected`
+        : 'No WAFs detected on web services', 4000);
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      showToast('Error: ' + (data.detail || r.status), 5000);
+    }
+  } catch (e) {
+    showToast('Network error: ' + e.message, 5000);
+  }
 }
 </script>
 {% endblock %}
