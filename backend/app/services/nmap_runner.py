@@ -54,22 +54,25 @@ def _build_stealth_cmd(nmap_bin: str, targets: list[str]) -> list[str]:
     """
     ports = settings.nmap_stealth_top_ports
 
+    # Timing notes:
+    #   -T2 = ~0.4s inter-probe delay (polite but not crawling)
+    #   --scan-delay 2s = +2s per probe (host-level pacing, reduces burst)
+    #   200 ports × ~2.4s = 480s (~8 min) per host — host-timeout 15m gives headroom
     return [
         nmap_bin,
         "-sS",                    # SYN stealth scan (requires root / CAP_NET_RAW)
-        "-T1",                    # Sneaky: inter-probe delay ~15 seconds
+        "-T2",                    # Polite: ~0.4s inter-probe delay
         "--randomize-hosts",      # Shuffle target order
-        "--scan-delay", "5s",     # +5s between probes (cumulative with T1)
+        "--scan-delay", "2s",     # +2s between probes (host pacing)
         "-sV",                    # Service version detection
         "--version-intensity", str(settings.nmap_stealth_version_intensity),
         "--max-retries", "1",     # One retry if probe lost — no hammering
         "--open",                 # Only report open ports
         "--top-ports", str(ports),
         "--script-timeout", "15s",
-        "--host-timeout", "10m",
+        "--host-timeout", "15m",
         "--min-parallelism", "1",
         "--max-parallelism", "1",
-        "--max-rtt-timeout", "2s",  # Be patient with slow links; -T1 caps it anyway
         "-oX", "-",              # XML output to stdout
     ] + targets
 
