@@ -266,6 +266,7 @@ async def _run_port_scan(job_id: str, organization_id: int, profile: str | None 
         # After port scan, run WAF detection on discovered web services
         try:
             from app.services.wafw00f_runner import detect_waf_for_services
+            from app.models import Service
             waf_count = await detect_waf_for_services(
                 db=db,
                 services=db.query(Service).filter_by(organization_id=organization_id).all(),
