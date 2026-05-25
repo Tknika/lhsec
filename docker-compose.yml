@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: lhsec-backend
+    ports:
+      - "8005:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      DATABASE_URL: sqlite:////data/lhsec.db
+      NUCLEI_RESULTS_DIR: /data/nuclei_results
+      NUCLEI_BINARY: /usr/local/bin/nuclei
+      HTTPX_BINARY: /usr/local/bin/httpx
+      NMAP_BINARY: /usr/bin/nmap
+      NUCLEI_UPDATE_TEMPLATES: "true"
+    volumes:
+      - ./data:/data
+      - nuclei-templates:/root/nuclei-templates
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    restart: unless-stopped
+
+volumes:
+  nuclei-templates:

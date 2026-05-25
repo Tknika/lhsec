@@ -1,0 +1,12 @@
+services:
+  backend:
+    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      APP_DEBUG: "true"
+      NUCLEI_UPDATE_TEMPLATES: "false"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/templates:/app/templates
+      - ./backend/static:/app/static
+      - ./data:/data
+      - nuclei-templates:/root/nuclei-templates
