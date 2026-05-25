@@ -195,7 +195,7 @@ async def run_nmap_scan(
     scan_job: ScanJob,
     targets: list[str],   # IPs and CIDRs
     log: LogCallback,
-    profile: str = "default",  # "default" or "stealth"
+    profile: str | None = "default",  # "default" or "stealth"
 ) -> int:
     """
     Run nmap against *targets*, persist discovered services, return service count.
@@ -218,7 +218,19 @@ async def run_nmap_scan(
 
     ports = settings.nmap_ports
 
-    if profile == "stealth":
+    # Normalize profile from API input (can be null/empty)
+    requested_profile = (profile or "default").strip().lower()
+    normalized_profile = {
+        "stealth": "stealth",
+        "default": "default",
+        "balanced": "default",  # currently aliases to default nmap strategy
+        "fast": "default",      # currently aliases to default nmap strategy
+    }.get(requested_profile, "default")
+
+    if requested_profile not in ("default", "stealth", "balanced", "fast"):
+        log(f"[nmap] Unknown profile '{profile}', falling back to default")
+
+    if normalized_profile == "stealth":
         cmd = _build_stealth_cmd(nmap_bin, targets)
         port_desc = "top ports"
     else:
@@ -234,7 +246,7 @@ async def run_nmap_scan(
         ] + targets
         port_desc = f"{len(ports.split(','))} ports"
 
-    log(f"[nmap] [{profile.upper()}] Scanning {len(targets)} target(s) — {port_desc}…")
+    log(f"[nmap] [{normalized_profile.upper()}] Scanning {len(targets)} target(s) — {port_desc}…")
     log(f"[nmap] Running: {nmap_bin} {' '.join(cmd[1:8])} … {' '.join(targets)}")
 
     xml_buf: list[str] = []

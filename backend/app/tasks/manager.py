@@ -235,7 +235,7 @@ async def _run_ct_subdomain(job_id: str, organization_id: int, domain: str) -> N
         _running.pop(job_id, None)
 
 
-async def _run_port_scan(job_id: str, organization_id: int, profile: str = "default") -> None:
+async def _run_port_scan(job_id: str, organization_id: int, profile: str | None = "default") -> None:
     from app.services.nmap_runner import run_nmap_scan, kill_proc as nmap_kill_proc
 
     log = _make_log_callback(job_id)
@@ -683,7 +683,7 @@ def _schedule(coro):
     return _main_loop.create_task(coro)
 
 
-def launch_port_scan(db: Session, organization_id: int, profile: str = "default") -> ScanJob:
+def launch_port_scan(db: Session, organization_id: int, profile: str | None = "default") -> ScanJob:
     """Create a ScanJob and schedule an nmap port scan task."""
     job = _create_job(db, organization_id, "port_scan")
     task = _schedule(_run_port_scan(job.id, organization_id, profile))
